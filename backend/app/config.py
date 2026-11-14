@@ -1,0 +1,37 @@
+import os
+from pathlib import Path
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    APP_NAME: str = "Digital Evidence Intelligent Interface API"
+    APP_VERSION: str = "1.0.0"
+    API_V1_STR: str = "/api/v1"
+    DEBUG: bool = True
+    
+    # Security
+    SECRET_KEY: str = "vault-super-secret-key-change-in-production"
+    
+    # Storage settings
+    BASE_DIR: Path = Path(__file__).resolve().parent.parent
+    UPLOAD_DIR: Path = BASE_DIR / "storage_vault"
+    MAX_UPLOAD_SIZE_BYTES: int = 50 * 1024 * 1024  # 50MB
+    
+    # Database
+    DATABASE_URL: str = f"sqlite:///{BASE_DIR / 'evidence_vault.db'}"
+    
+    # OCR and AI configuration
+    TESSERACT_CMD: str | None = None
+    GEMINI_API_KEY: str | None = None
+    
+    # Legal Certificate defaults
+    CERTIFICATE_ISSUER_TITLE: str = "Digital Evidence Handling System / EvidenceVault"
+    STATUTORY_SECTION: str = "Section 65B of Indian Evidence Act / Section 63 Bharatiya Sakshya Adhiniyam"
+    
+    class Config:
+        env_file = ".env"
+        extra = "ignore"
+
+settings = Settings()
+
+# Ensure storage directory exists
+os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
