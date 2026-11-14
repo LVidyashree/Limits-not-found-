@@ -1,25 +1,59 @@
 {
   "expo": {
-    "name": "Evidencevault",
-    "slug": "Evidencevault",
+    "name": "EvidenceVault",
+    "slug": "evidencevault",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#101827",
+    "splash": {
+      "backgroundColor": "#101827",
+      "resizeMode": "contain"
+    },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.evidencevault.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "EvidenceVault requires camera access to capture photographic evidence of documents, screens, and physical records.",
+        "NSPhotoLibraryUsageDescription": "EvidenceVault requires photo library access to import screenshots and digital evidence for cryptographic hashing and preservation.",
+        "NSFaceIDUsageDescription": "EvidenceVault uses Face ID to securely unlock your offline evidence vault."
+      }
     },
     "android": {
+      "package": "com.evidencevault.app",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#101827",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT"
+      ],
       "predictiveBackGestureEnabled": false
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    }
+    "plugins": [
+      "expo-sqlite",
+      "expo-secure-store",
+      "expo-sharing",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow EvidenceVault to use Face ID to authenticate and open your secure vault."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "EvidenceVault needs access to your photos to preserve digital screenshots.",
+          "cameraPermission": "EvidenceVault needs camera access to capture incident evidence."
+        }
+      ]
+    ]
   }
 }
