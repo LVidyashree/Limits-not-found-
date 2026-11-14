@@ -11,7 +11,8 @@ from app.models.evidence import Evidence
 from app.models.finding import Finding
 from app.schemas.evidence import EvidenceResponse, EvidenceDetailResponse, EvidenceVerifyRequest
 from app.services.storage import save_upload_and_hash, verify_file_hash
-from app.services.ocr import extract_text_from_file
+from app.services.ocr import extract_text_from_file, run_image_ocr
+from app.services.speech import transcribe_audio
 from app.services.extractor import extract_entities_from_text
 from app.services.custody import log_custody_action
 
@@ -38,8 +39,18 @@ async def upload_evidence(
     # 1. Save and compute SHA-256
     filename, file_path, file_size, sha256_hash, category, metadata = await save_upload_and_hash(case_id, file)
 
-    # 2. Extract text (OCR for images, PyPDF for pdfs, or direct read for text)
-    extracted_text = extract_text_from_file(file_path, category)
+    # 2. Extract text / transcribe speech based on category
+    if category == "audio":
+        audio_result = transcribe_audio(file_path)
+        extracted_text = audio_result.get("text", "")
+        metadata["audio_transcription"] = {
+            "language": audio_result.get("language"),
+            "segments_count": len(audio_result.get("segments", [])),
+            "status": audio_result.get("status")
+        }
+    else:
+        # OCR for images, PyPDF for pdfs, or direct read for text
+        extracted_text = extract_text_from_file(file_path, category)
 
     # 3. Create Evidence record
     db_evidence = Evidence(
@@ -207,3 +218,90 @@ def delete_evidence(case_id: str, evidence_id: str, db: Session = Depends(get_db
     db.delete(evidence)
     db.commit()
     return None
+
+@router.post("/{evidence_id}/ocr", response_model=EvidenceDetailResponse)
+def trigger_image_ocr(case_id: str, evidence_id: str, db: Session = Depends(get_db)):
+    """Explicitly triggers or re-runs Tesseract OCR on an image evidence file."""
+    evidence = db.query(Evidence).filter(
+        Evidence.id == evidence_id,
+        Evidence.case_id == case_id
+    ).first()
+    if not evidence:
+        raise HTTPException(status_code=404, detail="Evidence not found")
+
+    text = run_image_ocr(evidence.file_path)
+    evidence.extracted_text = text
+    
+    # Extract entities from the fresh OCR output
+    findings = extract_entities_from_text(f"{evidence.original_filename}\n{text}")
+    for f_item in findings:
+        db.add(Finding(
+            case_id=case_id,
+            evidence_id=evidence.id,
+            finding_type=f_item["finding_type"],
+            finding_value=f_item["finding_value"],
+            label=f_item["label"],
+            context_snippet=f_item.get("context_snippet"),
+            confidence=f_item.get("confidence", 0.90),
+            verification_status="needs_verification",
+            user_notes=f_item.get("user_notes")
+        ))
+    
+    db.commit()
+    db.refresh(evidence)
+
+    log_custody_action(
+        db=db,
+        case_id=case_id,
+        evidence_id=evidence.id,
+        action_type="OCR_PROCESSING_EXECUTED",
+        actor="Tesseract OCR Engine",
+        description=f"OCR executed on '{evidence.original_filename}'. Extracted {len(text)} characters and {len(findings)} findings.",
+        sha256_hash=evidence.sha256_hash
+    )
+
+    return evidence
+
+@router.post("/{evidence_id}/transcribe", response_model=EvidenceDetailResponse)
+def trigger_audio_transcription(case_id: str, evidence_id: str, db: Session = Depends(get_db)):
+    """Explicitly triggers Whisper Speech-to-Text on an audio evidence file."""
+    evidence = db.query(Evidence).filter(
+        Evidence.id == evidence_id,
+        Evidence.case_id == case_id
+    ).first()
+    if not evidence:
+        raise HTTPException(status_code=404, detail="Evidence not found")
+
+    audio_res = transcribe_audio(evidence.file_path)
+    text = audio_res.get("text", "")
+    evidence.extracted_text = text
+    
+    # Extract entities from spoken transcript
+    findings = extract_entities_from_text(f"{evidence.original_filename}\n{text}")
+    for f_item in findings:
+        db.add(Finding(
+            case_id=case_id,
+            evidence_id=evidence.id,
+            finding_type=f_item["finding_type"],
+            finding_value=f_item["finding_value"],
+            label=f_item["label"],
+            context_snippet=f_item.get("context_snippet"),
+            confidence=f_item.get("confidence", 0.90),
+            verification_status="needs_verification",
+            user_notes=f_item.get("user_notes")
+        ))
+
+    db.commit()
+    db.refresh(evidence)
+
+    log_custody_action(
+        db=db,
+        case_id=case_id,
+        evidence_id=evidence.id,
+        action_type="AUDIO_TRANSCRIPTION_EXECUTED",
+        actor="Whisper AI Engine",
+        description=f"Whisper transcription completed on '{evidence.original_filename}' (Lang: {audio_res.get('language')}). Extracted {len(findings)} findings.",
+        sha256_hash=evidence.sha256_hash
+    )
+
+    return evidence
