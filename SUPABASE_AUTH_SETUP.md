@@ -37,8 +37,18 @@ what protects data. Never put a `service_role` key in the app.
 
 ## 3. Database
 
-Run `supabase_schema.sql` once in the SQL editor, then `supabase_rls_policies.sql` (idempotent;
-it replaces all policies on the six public tables and never touches `auth.users`).
+Apply the versioned migrations in order (SQL editor, one file at a time), or with a direct
+database connection:
+
+```bash
+DATABASE_URL='postgresql://postgres:<password>@db.<ref>.supabase.co:5432/postgres' \
+  node supabase/tests/apply-migrations.mjs
+```
+
+The files in `supabase/migrations/` are the single source of truth. The old
+`supabase_schema.sql` and `supabase_rls_policies.sql` are deprecated stubs — do not run them.
+See `supabase/README.md` for the schema and policy reference, and
+`node supabase/tests/run-rls-tests.mjs` to verify the policies on a disposable PostgreSQL.
 
 ## 4. Automated checks
 
