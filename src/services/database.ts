@@ -548,4 +548,3 @@ export const wipeAllDatabaseData = async (): Promise<void> => {
   `);
   await logActivity('vault_wiped', 'All vault database records purged by user');
 };
-
