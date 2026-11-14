@@ -4,14 +4,13 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity,
   Alert,
   Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList, ActivityLog } from '../types';
-import { Colors, Spacing, Typography, BorderRadius } from '../theme';
+import { Colors, Spacing, BorderRadius } from '../theme';
 import {
   ScreenWrapper,
   Header,
@@ -38,10 +37,14 @@ import {
   isBiometricsSupported,
   resetVaultSecurity,
 } from '../services/security';
+import { useAuth } from '../context/AuthContext';
+import { getAuthErrorMessage } from '../services/authServiceCore';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TrustCentre'>;
 
 export const TrustCentreScreen: React.FC<Props> = ({ navigation }) => {
+  const { user, signOut } = useAuth();
+  const [signingOut, setSigningOut] = useState(false);
   const [storageInfo, setStorageInfo] = useState({
     evidenceFilesCount: 0,
     evidenceBytes: 0,
@@ -59,30 +62,60 @@ export const TrustCentreScreen: React.FC<Props> = ({ navigation }) => {
   } | null>(null);
 
   useEffect(() => {
-    loadTrustData();
-  }, []);
+    let active = true;
 
-  const loadTrustData = async () => {
-    try {
-      const [storage, bioSupp, bioEn, actLogs] = await Promise.all([
-        getStorageUsage(),
-        isBiometricsSupported(),
-        isBiometricsEnabled(),
-        getRecentActivity(25),
-      ]);
-      setStorageInfo(storage);
-      setBiometricsAvailable(bioSupp);
-      setBiometricsActive(bioEn);
-      setLogs(actLogs);
-    } catch (err) {
-      console.error('Failed to load trust centre data:', err);
-    }
-  };
+    const loadTrustData = async () => {
+      try {
+        const [storage, bioSupp, bioEn, actLogs] = await Promise.all([
+          getStorageUsage(),
+          isBiometricsSupported(),
+          isBiometricsEnabled(),
+          getRecentActivity(25),
+        ]);
+        if (!active) return;
+        setStorageInfo(storage);
+        setBiometricsAvailable(bioSupp);
+        setBiometricsActive(bioEn);
+        setLogs(actLogs);
+      } catch (err) {
+        console.error('Failed to load trust centre data:', err);
+      }
+    };
+
+    loadTrustData();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleToggleBiometrics = async () => {
     const next = !biometricsActive;
     await setBiometricsEnabled(next);
     setBiometricsActive(next);
+  };
+
+  const handleSignOut = () => {
+    Alert.alert(
+      'Sign Out of Account',
+      'Your local evidence and vault passphrase stay on this device. You will need to sign in again to open the app.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign Out',
+          style: 'destructive',
+          onPress: async () => {
+            setSigningOut(true);
+            try {
+              await signOut();
+            } catch (err) {
+              Alert.alert('Sign Out Error', getAuthErrorMessage(err));
+            } finally {
+              setSigningOut(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleRunIntegrityAudit = async () => {
@@ -201,31 +234,37 @@ export const TrustCentreScreen: React.FC<Props> = ({ navigation }) => {
               <Ionicons name="shield-checkmark" size={26} color={Colors.teal} />
             </View>
             <View style={{ flex: 1, marginLeft: Spacing.sm }}>
-              <Text style={styles.statusTitle}>Vault Protected</Text>
+              <Text style={styles.statusTitle}>Local Vault Active</Text>
               <Text style={styles.statusSubtitle}>
-                Salted SHA-256 Passphrase Sealed • SQLite Encrypted
+                Salted SHA-256 Passphrase Hash • Evidence Stored Locally
               </Text>
             </View>
-            <Badge label="OFFLINE" type="success" />
+            <Badge label="LOCAL EVIDENCE" type="success" />
           </View>
 
           <View style={styles.securityCheckList}>
             <View style={styles.checkItem}>
               <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
               <Text style={styles.checkText}>
-                No plaintext passphrases saved anywhere on device
+                No plaintext passwords or vault passphrases stored anywhere on device
               </Text>
             </View>
             <View style={styles.checkItem}>
               <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
               <Text style={styles.checkText}>
-                Original files copied into isolated local sandbox unchanged
+                Original files copied into an isolated local sandbox unchanged
               </Text>
             </View>
             <View style={styles.checkItem}>
               <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
               <Text style={styles.checkText}>
-                Zero network calls: works seamlessly in Airplane Mode
+                Evidence stays on this device; only account sign-in uses the network
+              </Text>
+            </View>
+            <View style={styles.checkItem}>
+              <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
+              <Text style={styles.checkText}>
+                Vault passphrase is separate from your account password and never sent to Supabase
               </Text>
             </View>
           </View>
@@ -244,6 +283,38 @@ export const TrustCentreScreen: React.FC<Props> = ({ navigation }) => {
               />
             </View>
           )}
+        </Card>
+
+        {/* Account & Session */}
+        <SectionHeader title="Account & Session" />
+        <Card style={styles.accountCard}>
+          <View style={styles.accountRow}>
+            <View style={styles.accountIcon}>
+              <Ionicons name="person-circle-outline" size={22} color={Colors.teal} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.accountLabel}>SUPABASE AUTH</Text>
+              <Text style={styles.accountEmail} numberOfLines={1}>
+                {user?.email ?? 'Authenticated account'}
+              </Text>
+            </View>
+            <Badge
+              label={user?.emailConfirmed ? 'VERIFIED' : 'PENDING'}
+              type={user?.emailConfirmed ? 'success' : 'warning'}
+            />
+          </View>
+          <Text style={styles.accountNote}>
+            Supabase stores only your account identity. It never receives your vault
+            passphrase or evidence files. Signing out locks the local vault but
+            keeps your local evidence intact.
+          </Text>
+          <Button
+            title="Sign Out of Account"
+            onPress={handleSignOut}
+            loading={signingOut}
+            variant="danger"
+            icon="log-out-outline"
+          />
         </Card>
 
         {/* Local Storage Metrics Card */}
@@ -282,7 +353,7 @@ export const TrustCentreScreen: React.FC<Props> = ({ navigation }) => {
         <Card style={styles.auditCard}>
           <Text style={styles.auditTitle}>On-Disk Hash Verification Tool</Text>
           <Text style={styles.auditDesc}>
-            Read every evidence file from the phone's physical flash storage right now,
+            Read every evidence file from the device storage right now,
             recalculate its SHA-256 hash, and verify match against the recorded database digest.
           </Text>
 
@@ -441,6 +512,45 @@ const styles = StyleSheet.create({
   bioSub: {
     fontSize: 11,
     color: Colors.secondaryText,
+  },
+  accountCard: {
+    backgroundColor: Colors.secondaryBackground,
+    borderColor: Colors.borderTeal,
+    marginBottom: Spacing.md,
+  },
+  accountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  accountIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.sm,
+  },
+  accountLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.teal,
+    letterSpacing: 1,
+  },
+  accountEmail: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.white,
+    marginTop: 2,
+  },
+  accountNote: {
+    fontSize: 11,
+    color: Colors.secondaryText,
+    lineHeight: 16,
+    marginBottom: Spacing.sm,
   },
   storageGrid: {
     flexDirection: 'row',

@@ -142,7 +142,7 @@ export const CreateIncidentScreen: React.FC<Props> = ({ navigation }) => {
           <Text style={styles.introTitle}>Preserve Digital Evidence Early</Text>
           <Text style={styles.introText}>
             Document the key context before uploading screenshots or message logs.
-            All details stay 100% offline in your encrypted vault.
+            All details stay 100% offline in your local vault.
           </Text>
         </Card>
 
