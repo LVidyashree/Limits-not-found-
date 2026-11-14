@@ -8,7 +8,8 @@ from app.routers import (
     analysis_router,
     timeline_router,
     custody_router,
-    dossier_router
+    dossier_router,
+    qwen_router,
 )
 
 # Auto-create database tables
@@ -50,6 +51,7 @@ app.include_router(analysis_router, prefix=settings.API_V1_STR)
 app.include_router(timeline_router, prefix=settings.API_V1_STR)
 app.include_router(custody_router, prefix=settings.API_V1_STR)
 app.include_router(dossier_router, prefix=settings.API_V1_STR)
+app.include_router(qwen_router, prefix=settings.API_V1_STR)
 
 @app.get("/", tags=["Health & Status"])
 def root_status():

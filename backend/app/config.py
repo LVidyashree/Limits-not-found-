@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     WHISPER_MODEL: str = "base" # "tiny", "base", "small", "medium"
     WHISPER_DEVICE: str = "cpu" # "cpu" or "cuda"
     GEMINI_API_KEY: str | None = None
+
+    # Qwen GGUF model configuration
+    # Set QWEN_MODEL_PATH in .env to point to your GGUF file.
+    # Relative paths are resolved from backend/ directory.
+    QWEN_MODEL_PATH: str = "./models/Qwen2.5-3B-Instruct.Q4_K_M.gguf"
+    QWEN_N_CTX: int = 4096         # Context window
+    QWEN_N_THREADS: int = 4        # CPU threads (safe for 8 GB RAM)
+    QWEN_MAX_TOKENS: int = 1024    # Default max tokens per response
     
     # Legal Certificate defaults
     CERTIFICATE_ISSUER_TITLE: str = "Digital Evidence Handling System / EvidenceVault"

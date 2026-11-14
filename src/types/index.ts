@@ -104,6 +104,49 @@ export interface VaultState {
   biometricsEnabled: boolean;
 }
 
+// ─── Qwen AI types ─────────────────────────────────────────────────────────────
+
+export type QwenModelStatus =
+  | 'MODEL_NOT_FOUND'
+  | 'MODEL_AVAILABLE'
+  | 'MODEL_LOADED'
+  | 'INFERENCE_ERROR';
+
+export interface QwenStatusInfo {
+  status: QwenModelStatus;
+  model_path: string;
+  message: string;
+  file_size_mb?: number;
+}
+
+export interface QwenAnalysisResult {
+  capability: string;
+  model_status: QwenModelStatus;
+  error?: string | null;
+  result?: Record<string, unknown> | null;
+  human_review_required: boolean;
+  timestamp: string;
+}
+
+export interface QwenFullAnalysis {
+  case_id: string;
+  case_title: string;
+  analysis_timestamp: string;
+  model_status: QwenModelStatus;
+  results: {
+    classification?: QwenAnalysisResult;
+    entities?: QwenAnalysisResult;
+    events?: QwenAnalysisResult;
+    timeline?: QwenAnalysisResult;
+    conflicts?: QwenAnalysisResult;
+    missing_info?: QwenAnalysisResult;
+    report?: Record<string, unknown>;
+  };
+  human_review_required: boolean;
+}
+
+// ─── Navigation ────────────────────────────────────────────────────────────────
+
 export type RootStackParamList = {
   WelcomeVault: undefined;
   Dashboard: undefined;
