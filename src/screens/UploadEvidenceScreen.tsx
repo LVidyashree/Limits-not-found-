@@ -30,6 +30,7 @@ import {
 } from '../services/storage';
 import { insertEvidence, getCaseById } from '../services/database';
 import { runEvidenceAnalysis } from '../services/analysisEngine';
+import { maybeAutoBackupEvidence } from '../services/backupService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'UploadEvidence'>;
 
@@ -91,6 +92,12 @@ export const UploadEvidenceScreen: React.FC<Props> = ({ route, navigation }) => 
 
       setCurrentStep('4. Performing local rule-based entity extraction...');
       await runEvidenceAnalysis(newEvidence, extractedContent);
+
+      // Optional auto-backup is consent-gated and never blocks the local
+      // preservation flow or prompts for a passphrase.
+      void maybeAutoBackupEvidence(newEvidence.id).catch((err) =>
+        console.warn('Automatic encrypted backup skipped:', err)
+      );
 
       setUploadedEvidence(newEvidence);
       setProcessing(false);
@@ -221,6 +228,10 @@ export const UploadEvidenceScreen: React.FC<Props> = ({ route, navigation }) => 
 
       await insertEvidence(newEvidence);
       await runEvidenceAnalysis(newEvidence, noteContent);
+
+      void maybeAutoBackupEvidence(newEvidence.id).catch((err) =>
+        console.warn('Automatic encrypted backup skipped:', err)
+      );
 
       setProcessing(false);
       setNoteTitle('');

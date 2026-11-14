@@ -65,6 +65,7 @@ export const WelcomeVaultScreen: React.FC<Props> = ({ navigation }) => {
   const [showPassphrase, setShowPassphrase] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false);
 
   // Supabase account state
   const [authMode, setAuthMode] = useState<AuthMode>('signin');
@@ -299,6 +300,13 @@ export const WelcomeVaultScreen: React.FC<Props> = ({ navigation }) => {
       return;
     }
 
+    if (!recoveryAcknowledged) {
+      setErrorMsg(
+        'Please confirm that you understand there is no recovery if this passphrase is lost.'
+      );
+      return;
+    }
+
     setActionLoading(true);
     const success = await setupVaultPassphrase(passphrase, enableBiometrics);
     setActionLoading(false);
@@ -306,7 +314,7 @@ export const WelcomeVaultScreen: React.FC<Props> = ({ navigation }) => {
     if (success) {
       Alert.alert(
         'Vault Created Successfully',
-        'Your local vault is protected by a salted cryptographic hash. Your vault passphrase is separate from your account password and is never sent to Supabase. There is no recovery for the vault passphrase, so store it safely.',
+        'Your local vault is protected by a salted cryptographic hash. Your vault passphrase is separate from your account password and is never sent to Supabase.\n\nThis passphrase is also your cloud backup recovery key. If you forget it, the app cannot unlock your vault or decrypt your encrypted cloud backups. There is no password reset or recovery key for this passphrase, so store it safely.',
         [{ text: 'Enter Vault', onPress: () => navigation.replace('Dashboard') }]
       );
     } else {
@@ -802,6 +810,49 @@ export const WelcomeVaultScreen: React.FC<Props> = ({ navigation }) => {
                   </View>
                 )}
 
+                {!isInitialized && (
+                  <View style={styles.recoveryCard}>
+                    <View style={styles.recoveryHeader}>
+                      <Ionicons name="key" size={16} color={Colors.warning} />
+                      <Text style={styles.recoveryTitle}>
+                        Your Recovery Key Is Your Passphrase
+                      </Text>
+                    </View>
+                    <Text style={styles.recoveryText}>
+                      EvidenceVault does not store your passphrase and cannot
+                      reset it. The same passphrase derives the AES-256 key for
+                      optional encrypted cloud backups. If you lose it, you
+                      cannot unlock this vault or decrypt backups. Write it down
+                      and keep it somewhere safe and offline.
+                    </Text>
+
+                    <TouchableOpacity
+                      style={styles.ackRow}
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        setRecoveryAcknowledged((current) => !current);
+                        setErrorMsg('');
+                      }}
+                    >
+                      <Ionicons
+                        name={
+                          recoveryAcknowledged
+                            ? 'checkbox'
+                            : 'square-outline'
+                        }
+                        size={20}
+                        color={
+                          recoveryAcknowledged ? Colors.teal : Colors.secondaryText
+                        }
+                      />
+                      <Text style={styles.ackText}>
+                        I understand there is no way to recover my vault or
+                        encrypted backups if I lose this passphrase.
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
                 {errorMsg ? (
                   <View style={styles.errorBanner}>
                     <Ionicons name="alert-circle" size={16} color={Colors.danger} />
@@ -813,6 +864,7 @@ export const WelcomeVaultScreen: React.FC<Props> = ({ navigation }) => {
                   title={isInitialized ? 'Unlock Vault' : 'Initialize Vault'}
                   onPress={isInitialized ? handleUnlockVault : handleCreateVault}
                   loading={actionLoading}
+                  disabled={!isInitialized && !recoveryAcknowledged}
                   variant="primary"
                   icon={isInitialized ? 'lock-open-outline' : 'shield-outline'}
                   style={{ marginTop: Spacing.md }}
@@ -996,6 +1048,45 @@ const styles = StyleSheet.create({
   biometricSub: {
     fontSize: 11,
     color: Colors.secondaryText,
+  },
+  recoveryCard: {
+    backgroundColor: '#2A2314',
+    borderWidth: 1,
+    borderColor: '#785A1D',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  recoveryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  recoveryTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FBBF24',
+    marginLeft: 6,
+  },
+  recoveryText: {
+    fontSize: 11,
+    color: Colors.secondaryText,
+    lineHeight: 16,
+  },
+  ackRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: Spacing.sm,
+    paddingTop: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: '#4A3B1B',
+  },
+  ackText: {
+    flex: 1,
+    fontSize: 11,
+    color: Colors.white,
+    lineHeight: 16,
+    marginLeft: 8,
   },
   errorBanner: {
     flexDirection: 'row',

@@ -14,6 +14,7 @@ Apply in filename order:
 | 2 | `20261114090100_create_evidencevault_tables.sql` | Tables, constraints, triggers, signup profile trigger. |
 | 3 | `20261114090200_create_evidencevault_indexes.sql` | Indexes aligned with the RLS access paths. |
 | 4 | `20261114090300_enable_evidencevault_rls.sql` | Enables RLS, owner-only policies, privilege hardening. |
+| 5 | `20261114090400_enable_encrypted_cloud_backup.sql` | Private `evidence-backups` bucket, Storage RLS, backup metadata columns. |
 
 ### With `psql` (direct connection)
 
@@ -77,6 +78,11 @@ Created automatically by the `on_auth_user_created` trigger. No email or other P
 | `encryption_version` | smallint | ≥ 1 |
 | `uploaded_at` | timestamptz | |
 | `processing_status` | text | `pending` \| `processing` \| `completed` \| `error` |
+| `backup_status` | text | `not_backed_up` \| `uploading` \| `backed_up` \| `failed` |
+| `backup_last_success_at` | timestamptz | server-confirmed successful upload time |
+| `backup_error` | text | short non-sensitive failure reason, ≤ 500 chars |
+| `backup_bytes` | bigint | ciphertext size in Storage, ≥ 0 |
+| `backup_ciphertext_sha256` | text | 64 lowercase hex chars, nullable |
 
 ### `incident_reports`
 | Column | Type | Notes |
@@ -103,6 +109,69 @@ Append-only for API roles. Because `case_id`/`evidence_id` are not foreign keys,
 (`ev_validate_audit_event`) checks on insert that any referenced case/evidence belongs to
 `user_id`. This keeps the audit trail after a case is deleted while still preventing
 cross-user references.
+
+## Case sync (local-first)
+
+The case screens use SQLite as the on-device source of truth and Supabase as an
+authenticated mirror. No mock/demo rows are created by the normal workflow.
+
+- **Create.** The case is inserted locally first. When a Supabase session exists, a stable
+  UUID is reserved in `cases.cloud_case_id` before the `cases` upsert, so a retry cannot
+  create a second cloud record.
+- **Read.** Screens paint local rows immediately, then query `cases` under the user's JWT.
+  Cloud rows without a local `cloud_case_id` mapping are inserted locally once. Existing
+  local rows are **never** overwritten by cloud data, so local-only fields
+  (`incident_time`, `suspect_info`, `severity`) are preserved.
+- **Update.** Edits and status changes write locally first, then mirror only the schema-backed
+  fields (`title`, `incident_type`, `incident_description`, `incident_date`,
+  `incident_platform`, `status`).
+- **Delete.** A mapped case is deleted from Supabase first. The local row is removed only
+  after Supabase confirms the delete (or reports the row already gone), so a deleted cloud
+  case cannot reappear during the next merge.
+- **RLS.** Every query runs as the signed-in user; `user_id` is never sent by the app and
+  defaults to `auth.uid()` server-side. No `service_role` key is used.
+
+## Encrypted cloud backup (optional)
+
+Cloud backup is opt-in. Evidence files are still stored locally by default.
+
+- **Bucket.** `evidence-backups` is **private**. It accepts `application/octet-stream` only
+  and caps each object at 100 MiB. The app's plaintext cap is 95 MiB, leaving room for the
+  envelope header and authentication tag.
+- **Object path.** `<auth.uid()>/<case uuid>/<evidence uuid>.evb`. A path is unique per
+  user, case and evidence row.
+- **Storage RLS.** SELECT/INSERT/UPDATE/DELETE are limited to the `authenticated` role.
+  The first path segment must equal `auth.uid()`. INSERT/UPDATE also require the second
+  segment to be a case owned by that user and the object name to end in `.evb`. A user
+  therefore cannot read, modify or delete another user's backup object, even with the
+  anon key and a valid JWT.
+- **Encryption happens on the device.** The app derives a 256-bit key from the vault
+  passphrase with Argon2id, then seals the plaintext with AES-256-GCM using a fresh random
+  nonce per backup. The envelope is
+  `"EVB1" | uint32 header length | JSON header | ciphertext | 16-byte tag`, and the prefix
+  plus header are GCM additional authenticated data. The header binds `userId`, `caseId`
+  and `evidenceId`, so an envelope cannot be moved to another row.
+- **What Supabase receives.** Only ciphertext plus non-content metadata: file size,
+  filename, MIME type, hashes and backup timestamps. The passphrase, raw key and plaintext
+  are never sent to Supabase and never written to these tables.
+- **Success is server-confirmed.** A local row is marked `backed_up` only after Storage
+  confirms the object and its size, and the `evidence` metadata update succeeds. If the
+  metadata update fails, the unconfirmed object is removed.
+- **Restore verification.** The downloaded ciphertext is checked against
+  `backup_ciphertext_sha256` when present, then GCM authenticates the envelope and its
+  plaintext SHA-256. The restored file is written locally and the app's recorded
+  `evidence.sha256_hash` is recomputed and checked again. A file that fails either check is
+  discarded.
+- **Recovery key.** The vault passphrase *is* the recovery key. It is never stored or
+  escrowed. If it is lost, the vault cannot be unlocked and encrypted backups cannot be
+  decrypted. The app requires the user to acknowledge this before vault creation and
+  repeats the warning next to the backup controls.
+- **Auto-backup is opt-in.** It is off by default, needs an explicit consent action that is
+  timestamped, and only runs while a derived key is already cached in memory (for example
+  after a manual backup or restore in the same app session). It never prompts for or stores
+  a passphrase in the background.
+- **No `service_role` in the app.** The client uses only the Supabase URL, anon key and the
+  signed-in user's JWT. Storage and table RLS remain the final authority.
 
 ## RLS policies
 
@@ -138,7 +207,7 @@ row owner to `(select auth.uid())`. `anon` has no table privileges at all.
 ## Verified behaviour
 
 `node supabase/tests/run-rls-tests.mjs` (or `npm run test:rls`) starts a disposable
-`postgres:17-alpine` container, applies the real migration files, and runs 96 assertions:
+`postgres:17-alpine` container, applies the real migration files, and runs 122 assertions:
 
 - fresh install: RLS enabled, 17 owner-only policies, no anon privileges, audit append-only
 - upgrade path: old draft archived, rows preserved, old policies/privileges removed
@@ -147,6 +216,8 @@ row owner to `(select auth.uid())`. `anon` has no table privileges at all.
 - cross-user parent references (evidence/report → case, audit → case/evidence) are rejected
 - audit update/delete rejected; metadata secrets/size rejected; timestamps cannot be backdated
 - deletes cascade to children, audit history survives, account deletion cascades cleanly
+- backup bucket is private, ciphertext-only and size-capped; backup columns are constrained
+- Storage RLS rejects cross-user uploads, reads, moves, updates and deletes; anon sees nothing
 
 Run it after any schema change. Do not describe the database as secure on the basis of reading
 the policies alone — run the suite.

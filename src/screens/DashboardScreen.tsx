@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,17 +7,17 @@ import {
   RefreshControl,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList, Case, ActivityLog, CaseStatistics } from '../types';
-import { Colors, Spacing, Typography, BorderRadius } from '../theme';
+import { Colors, Spacing, BorderRadius } from '../theme';
 import {
   ScreenWrapper,
   Header,
   Card,
-  Button,
   Badge,
   SectionHeader,
   EmptyState,
@@ -28,7 +28,7 @@ import {
   getRecentActivity,
 } from '../services/database';
 import { lockVault } from '../services/security';
-import { createDemoCaseIfNotExists } from '../services/demoData';
+import { syncCloudCasesIntoLocal } from '../services/caseService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Dashboard'>;
 
@@ -43,19 +43,51 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   const [recentCases, setRecentCases] = useState<Case[]>([]);
   const [recentLogs, setRecentLogs] = useState<ActivityLog[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [cloudError, setCloudError] = useState<string | null>(null);
+  const firstLoad = useRef(true);
 
   const loadDashboardData = async () => {
+    if (firstLoad.current) setLoading(true);
+    setLoadError(null);
+    setCloudError(null);
+
     try {
-      const [statsData, allCases, logsData] = await Promise.all([
+      // Paint local rows immediately, then merge cloud-only cases.
+      const localCases = await getAllCases();
+      setRecentCases(localCases.slice(0, 4));
+
+      const [statsData, logsData] = await Promise.all([
         getDashboardStats(),
-        getAllCases(),
         getRecentActivity(6),
       ]);
       setStats(statsData);
-      setRecentCases(allCases.slice(0, 4));
       setRecentLogs(logsData);
+
+      firstLoad.current = false;
+      setLoading(false);
+
+      const sync = await syncCloudCasesIntoLocal(localCases);
+      if (sync.cloudError) {
+        setCloudError(sync.cloudError);
+      }
+
+      if (sync.imported > 0) {
+        const [mergedCases, mergedStats] = await Promise.all([
+          getAllCases(),
+          getDashboardStats(),
+        ]);
+        setRecentCases(mergedCases.slice(0, 4));
+        setStats(mergedStats);
+      }
     } catch (err) {
-      console.error('Failed to load dashboard data:', err);
+      setLoadError(
+        err instanceof Error ? err.message : 'Could not load your cases.'
+      );
+    } finally {
+      firstLoad.current = false;
+      setLoading(false);
     }
   };
 
@@ -83,16 +115,6 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
         },
       },
     ]);
-  };
-
-  const handleLoadDemo = async () => {
-    try {
-      const demoCase = await createDemoCaseIfNotExists();
-      await loadDashboardData();
-      navigation.navigate('CaseDetail', { caseId: demoCase.id });
-    } catch (err) {
-      Alert.alert('Demo Error', String(err));
-    }
   };
 
   return (
@@ -125,6 +147,29 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
             VAULT ACTIVE • 100% OFFLINE • AIRPLANE MODE READY
           </Text>
         </View>
+
+        {loading ? (
+          <View style={styles.loadingBanner}>
+            <ActivityIndicator color={Colors.teal} size="small" />
+            <Text style={styles.loadingText}>Loading your cases...</Text>
+          </View>
+        ) : null}
+
+        {loadError ? (
+          <View style={styles.errorBanner}>
+            <Ionicons name="alert-circle-outline" size={16} color={Colors.danger} />
+            <Text style={styles.errorText}>{loadError}</Text>
+          </View>
+        ) : null}
+
+        {cloudError ? (
+          <View style={styles.warningBanner}>
+            <Ionicons name="cloud-offline-outline" size={16} color={Colors.warning} />
+            <Text style={styles.warningText}>
+              Case sync failed. Showing cases saved on this device. {cloudError}
+            </Text>
+          </View>
+        ) : null}
 
         {/* High-Level Forensic Metric Cards */}
         <View style={styles.metricsGrid}>
@@ -201,15 +246,15 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: '#1E2533', borderColor: '#785A1D' }]}
+            style={[styles.actionButton, { backgroundColor: Colors.card }]}
             activeOpacity={0.8}
-            onPress={handleLoadDemo}
+            onPress={() => navigation.navigate('TrustCentre')}
           >
-            <View style={[styles.actionIconCircle, { backgroundColor: 'rgba(245, 158, 11, 0.2)' }]}>
-              <Ionicons name="cube-outline" size={24} color={Colors.warning} />
+            <View style={[styles.actionIconCircle, { backgroundColor: Colors.successMuted }]}>
+              <Ionicons name="cloud-upload-outline" size={24} color={Colors.success} />
             </View>
-            <Text style={styles.actionTitle}>Demo Case</Text>
-            <Text style={styles.actionSubtitle}>Fictional payment fraud</Text>
+            <Text style={styles.actionTitle}>Cloud Backup</Text>
+            <Text style={styles.actionSubtitle}>Encrypted restore point</Text>
           </TouchableOpacity>
         </View>
 
@@ -220,7 +265,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
           onAction={() => navigation.navigate('CaseList')}
         />
 
-        {recentCases.length === 0 ? (
+        {!loading && recentCases.length === 0 ? (
           <EmptyState
             icon="folder-open-outline"
             title="No Incidents Logged Yet"
@@ -359,6 +404,58 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.tealLight,
     letterSpacing: 0.8,
+  },
+  loadingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.secondaryBackground,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  loadingText: {
+    fontSize: 12,
+    color: Colors.secondaryText,
+    marginLeft: 8,
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: Colors.dangerMuted,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.danger,
+  },
+  errorText: {
+    flex: 1,
+    fontSize: 12,
+    color: Colors.danger,
+    marginLeft: 8,
+    lineHeight: 17,
+  },
+  warningBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: Colors.warningMuted,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.warning,
+  },
+  warningText: {
+    flex: 1,
+    fontSize: 12,
+    color: Colors.warning,
+    marginLeft: 8,
+    lineHeight: 17,
   },
   metricsGrid: {
     flexDirection: 'row',

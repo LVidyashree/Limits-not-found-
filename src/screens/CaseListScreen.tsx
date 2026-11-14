@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,12 +6,13 @@ import {
   FlatList,
   TouchableOpacity,
   RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList, Case } from '../types';
-import { Colors, Spacing, Typography, BorderRadius } from '../theme';
+import { Colors, Spacing, BorderRadius } from '../theme';
 import {
   ScreenWrapper,
   Header,
@@ -21,23 +22,48 @@ import {
   EmptyState,
 } from '../components';
 import { getAllCases } from '../services/database';
+import { syncCloudCasesIntoLocal } from '../services/caseService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CaseList'>;
 
 export const CaseListScreen: React.FC<Props> = ({ navigation }) => {
   const [cases, setCases] = useState<Case[]>([]);
-  const [filteredCases, setFilteredCases] = useState<Case[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'demo'>('all');
   const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [cloudError, setCloudError] = useState<string | null>(null);
+  const firstLoad = useRef(true);
 
   const loadCases = async () => {
+    if (firstLoad.current) setLoading(true);
+    setLoadError(null);
+    setCloudError(null);
+
     try {
-      const all = await getAllCases();
-      setCases(all);
-      applyFilter(all, searchQuery, activeFilter);
+      // Show local rows first so the vault is usable offline.
+      const local = await getAllCases();
+      setCases(local);
+
+      firstLoad.current = false;
+      setLoading(false);
+
+      const sync = await syncCloudCasesIntoLocal(local);
+      if (sync.cloudError) {
+        setCloudError(sync.cloudError);
+      }
+
+      if (sync.imported > 0) {
+        setCases(await getAllCases());
+      }
     } catch (err) {
-      console.error('Failed to load cases:', err);
+      setLoadError(
+        err instanceof Error ? err.message : 'Could not load your cases.'
+      );
+    } finally {
+      firstLoad.current = false;
+      setLoading(false);
     }
   };
 
@@ -47,21 +73,19 @@ export const CaseListScreen: React.FC<Props> = ({ navigation }) => {
     }, [])
   );
 
-  const applyFilter = (
-    data: Case[],
-    query: string,
-    filter: 'all' | 'active' | 'demo'
-  ) => {
-    let result = [...data];
+  // Derived state keeps the displayed list in sync with a background refresh
+  // without ever reading a stale search query or pill selection.
+  const filteredCases = useMemo(() => {
+    let result = [...cases];
 
-    if (filter === 'active') {
+    if (activeFilter === 'active') {
       result = result.filter((c) => c.status === 'active' && !c.is_demo);
-    } else if (filter === 'demo') {
+    } else if (activeFilter === 'demo') {
       result = result.filter((c) => c.is_demo === 1);
     }
 
-    if (query.trim()) {
-      const q = query.toLowerCase();
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
       result = result.filter(
         (c) =>
           c.title.toLowerCase().includes(q) ||
@@ -71,17 +95,15 @@ export const CaseListScreen: React.FC<Props> = ({ navigation }) => {
       );
     }
 
-    setFilteredCases(result);
-  };
+    return result;
+  }, [cases, searchQuery, activeFilter]);
 
   const handleSearch = (txt: string) => {
     setSearchQuery(txt);
-    applyFilter(cases, txt, activeFilter);
   };
 
   const handleFilterChange = (filter: 'all' | 'active' | 'demo') => {
     setActiveFilter(filter);
-    applyFilter(cases, searchQuery, filter);
   };
 
   const onRefresh = async () => {
@@ -167,6 +189,29 @@ export const CaseListScreen: React.FC<Props> = ({ navigation }) => {
         </View>
 
         {/* Case List */}
+        {loading ? (
+          <View style={styles.loadingBox}>
+            <ActivityIndicator color={Colors.teal} size="small" />
+            <Text style={styles.loadingText}>Loading your cases...</Text>
+          </View>
+        ) : null}
+
+        {loadError ? (
+          <View style={styles.errorBanner}>
+            <Ionicons name="alert-circle-outline" size={16} color={Colors.danger} />
+            <Text style={styles.errorText}>{loadError}</Text>
+          </View>
+        ) : null}
+
+        {cloudError ? (
+          <View style={styles.warningBanner}>
+            <Ionicons name="cloud-offline-outline" size={16} color={Colors.warning} />
+            <Text style={styles.warningText}>
+              Account sync failed. Showing cases saved on this device. {cloudError}
+            </Text>
+          </View>
+        ) : null}
+
         <FlatList
           data={filteredCases}
           keyExtractor={(item) => item.id}
@@ -179,17 +224,19 @@ export const CaseListScreen: React.FC<Props> = ({ navigation }) => {
           }
           contentContainerStyle={styles.listContent}
           ListEmptyComponent={
-            <EmptyState
-              icon="search-outline"
-              title="No Matching Incidents"
-              description={
-                searchQuery
-                  ? `No cases found matching "${searchQuery}".`
-                  : 'You have not reported any incidents in this category.'
-              }
-              actionTitle="Create New Incident"
-              onAction={() => navigation.navigate('CreateIncident', {})}
-            />
+            loading ? undefined : (
+              <EmptyState
+                icon="search-outline"
+                title="No Matching Incidents"
+                description={
+                  searchQuery
+                    ? `No cases found matching "${searchQuery}".`
+                    : 'You have not reported any incidents in this category.'
+                }
+                actionTitle="Create New Incident"
+                onAction={() => navigation.navigate('CreateIncident', {})}
+              />
+            )
           }
           renderItem={({ item }) => (
             <Card
@@ -280,6 +327,58 @@ const styles = StyleSheet.create({
   filterTextActive: {
     color: Colors.white,
     fontWeight: '600',
+  },
+  loadingBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.secondaryBackground,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  loadingText: {
+    fontSize: 12,
+    color: Colors.secondaryText,
+    marginLeft: 8,
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: Colors.dangerMuted,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.danger,
+  },
+  errorText: {
+    flex: 1,
+    fontSize: 12,
+    color: Colors.danger,
+    marginLeft: 8,
+    lineHeight: 17,
+  },
+  warningBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: Colors.warningMuted,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.warning,
+  },
+  warningText: {
+    flex: 1,
+    fontSize: 12,
+    color: Colors.warning,
+    marginLeft: 8,
+    lineHeight: 17,
   },
   listContent: {
     paddingBottom: Spacing.xxl,

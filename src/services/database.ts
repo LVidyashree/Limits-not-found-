@@ -1,12 +1,14 @@
 import * as SQLite from 'expo-sqlite';
 import {
   Case,
+  CaseStatus,
   Evidence,
   Finding,
   TimelineEvent,
   ActivityLog,
   CaseStatistics,
   VerificationStatus,
+  BackupStatus,
 } from '../types';
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
@@ -108,6 +110,67 @@ const initSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
     CREATE INDEX IF NOT EXISTS idx_timeline_case ON timeline_events(case_id, event_date);
     CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON activity_logs(timestamp DESC);
   `);
+
+  await migrateBackupColumns(db);
+};
+
+const tableHasColumn = async (
+  db: SQLite.SQLiteDatabase,
+  table: 'cases' | 'evidence',
+  column: string
+): Promise<boolean> => {
+  const columns = await db.getAllAsync<{ name: string }>(
+    `PRAGMA table_info(${table})`
+  );
+  return columns.some((entry) => entry.name === column);
+};
+
+const addColumnIfMissing = async (
+  db: SQLite.SQLiteDatabase,
+  table: 'cases' | 'evidence',
+  column: string,
+  definition: string
+): Promise<void> => {
+  if (await tableHasColumn(db, table, column)) return;
+  await db.execAsync(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+};
+
+/**
+ * Additive, idempotent migration for installations created before encrypted
+ * cloud backup existed. No local evidence bytes are rewritten and no
+ * passphrase/key material is stored in SQLite.
+ */
+const migrateBackupColumns = async (db: SQLite.SQLiteDatabase): Promise<void> => {
+  try {
+    await addColumnIfMissing(db, 'cases', 'cloud_case_id', 'TEXT');
+    await addColumnIfMissing(db, 'evidence', 'cloud_evidence_id', 'TEXT');
+    await addColumnIfMissing(db, 'evidence', 'cloud_case_id', 'TEXT');
+    await addColumnIfMissing(
+      db,
+      'evidence',
+      'backup_status',
+      "TEXT NOT NULL DEFAULT 'not_backed_up'"
+    );
+    await addColumnIfMissing(db, 'evidence', 'backup_last_at', 'TEXT');
+    await addColumnIfMissing(db, 'evidence', 'backup_error', 'TEXT');
+    await addColumnIfMissing(db, 'evidence', 'backup_storage_path', 'TEXT');
+    await addColumnIfMissing(db, 'evidence', 'backup_bytes', 'INTEGER');
+    await addColumnIfMissing(
+      db,
+      'evidence',
+      'backup_ciphertext_sha256',
+      'TEXT'
+    );
+
+    await db.execAsync(`
+      CREATE INDEX IF NOT EXISTS idx_cases_cloud ON cases(cloud_case_id);
+      CREATE INDEX IF NOT EXISTS idx_evidence_cloud ON evidence(cloud_evidence_id);
+      CREATE INDEX IF NOT EXISTS idx_evidence_backup_status ON evidence(backup_status);
+    `);
+  } catch (err) {
+    // The schema upgrade must never prevent the local vault from opening.
+    console.error('Backup column migration notice:', err);
+  }
 };
 
 // ======================== CASE REPOSITORY ========================
@@ -127,13 +190,14 @@ export const getCaseById = async (id: string): Promise<Case | null> => {
   );
 };
 
-export const insertCase = async (caseData: Case): Promise<void> => {
+const insertCaseRow = async (caseData: Case): Promise<void> => {
   const db = await getDatabase();
   await db.runAsync(
     `INSERT INTO cases (
       id, title, category, description, incident_date, incident_time,
-      platform, suspect_info, severity, status, is_demo, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      platform, suspect_info, severity, status, is_demo, created_at, updated_at,
+      cloud_case_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       caseData.id,
       caseData.title,
@@ -148,12 +212,32 @@ export const insertCase = async (caseData: Case): Promise<void> => {
       caseData.is_demo,
       caseData.created_at,
       caseData.updated_at,
+      caseData.cloud_case_id ?? null,
     ]
   );
+};
+
+export const insertCase = async (caseData: Case): Promise<void> => {
+  await insertCaseRow(caseData);
 
   await logActivity(
     'case_created',
     `Created incident case: "${caseData.title}" (${caseData.category})`,
+    caseData.id
+  );
+};
+
+/**
+ * Import a case that already exists in the signed-in user's Supabase account.
+ * Existing local rows are never updated by this path; the caller checks the
+ * cloud_case_id mapping first.
+ */
+export const insertCaseFromCloud = async (caseData: Case): Promise<void> => {
+  await insertCaseRow(caseData);
+
+  await logActivity(
+    'case_synced_from_cloud',
+    `Loaded case from your account: "${caseData.title}"`,
     caseData.id
   );
 };
@@ -184,6 +268,24 @@ export const updateCase = async (caseData: Case): Promise<void> => {
     'case_updated',
     `Updated incident case: "${caseData.title}"`,
     caseData.id
+  );
+};
+
+export const updateCaseStatus = async (
+  id: string,
+  status: CaseStatus,
+  updatedAt: string = new Date().toISOString()
+): Promise<void> => {
+  const db = await getDatabase();
+  await db.runAsync(
+    'UPDATE cases SET status = ?, updated_at = ? WHERE id = ?',
+    [status, updatedAt, id]
+  );
+
+  await logActivity(
+    'case_status_updated',
+    `Changed case status to ${status}`,
+    id
   );
 };
 
@@ -229,8 +331,11 @@ export const insertEvidence = async (evidence: Evidence): Promise<void> => {
     `INSERT INTO evidence (
       id, case_id, filename, original_filename, file_path, file_size,
       file_type, mime_type, sha256_hash, processing_status,
-      extracted_text, metadata_json, created_at, is_verified
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      extracted_text, metadata_json, created_at, is_verified,
+      cloud_evidence_id, cloud_case_id, backup_status, backup_last_at,
+      backup_error, backup_storage_path, backup_bytes,
+      backup_ciphertext_sha256
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       evidence.id,
       evidence.case_id,
@@ -246,6 +351,14 @@ export const insertEvidence = async (evidence: Evidence): Promise<void> => {
       evidence.metadata_json,
       evidence.created_at,
       evidence.is_verified,
+      evidence.cloud_evidence_id ?? null,
+      evidence.cloud_case_id ?? null,
+      evidence.backup_status ?? 'not_backed_up',
+      evidence.backup_last_at ?? null,
+      evidence.backup_error ?? null,
+      evidence.backup_storage_path ?? null,
+      evidence.backup_bytes ?? null,
+      evidence.backup_ciphertext_sha256 ?? null,
     ]
   );
 
@@ -294,6 +407,100 @@ export const deleteEvidence = async (id: string): Promise<void> => {
       ev.case_id
     );
   }
+};
+
+// ======================== CLOUD BACKUP MAPPING ========================
+
+export const getCaseByCloudCaseId = async (
+  cloudCaseId: string
+): Promise<Case | null> => {
+  const db = await getDatabase();
+  return db.getFirstAsync<Case>(
+    'SELECT * FROM cases WHERE cloud_case_id = ? LIMIT 1',
+    [cloudCaseId]
+  );
+};
+
+export const getEvidenceByCloudEvidenceId = async (
+  cloudEvidenceId: string
+): Promise<Evidence | null> => {
+  const db = await getDatabase();
+  return db.getFirstAsync<Evidence>(
+    'SELECT * FROM evidence WHERE cloud_evidence_id = ? LIMIT 1',
+    [cloudEvidenceId]
+  );
+};
+
+export const setCaseCloudId = async (
+  caseId: string,
+  cloudCaseId: string
+): Promise<void> => {
+  const db = await getDatabase();
+  await db.runAsync('UPDATE cases SET cloud_case_id = ? WHERE id = ?', [
+    cloudCaseId,
+    caseId,
+  ]);
+};
+
+export interface EvidenceBackupPatch {
+  status?: BackupStatus;
+  lastAt?: string | null;
+  error?: string | null;
+  storagePath?: string | null;
+  bytes?: number | null;
+  ciphertextSha256?: string | null;
+  cloudCaseId?: string | null;
+  cloudEvidenceId?: string | null;
+}
+
+/**
+ * Update only local backup metadata. The plaintext file and its hash are not
+ * touched. Column names are fixed literals, so the dynamic SET list is safe.
+ */
+export const updateEvidenceBackup = async (
+  id: string,
+  patch: EvidenceBackupPatch
+): Promise<void> => {
+  const assignments: string[] = [];
+  const values: (string | number | null)[] = [];
+
+  const assign = (column: string, value: string | number | null | undefined) => {
+    if (value === undefined) return;
+    assignments.push(`${column} = ?`);
+    values.push(value);
+  };
+
+  assign('backup_status', patch.status);
+  assign('backup_last_at', patch.lastAt);
+  assign('backup_error', patch.error);
+  assign('backup_storage_path', patch.storagePath);
+  assign('backup_bytes', patch.bytes);
+  assign('backup_ciphertext_sha256', patch.ciphertextSha256);
+  assign('cloud_case_id', patch.cloudCaseId);
+  assign('cloud_evidence_id', patch.cloudEvidenceId);
+
+  if (assignments.length === 0) return;
+
+  values.push(id);
+  const db = await getDatabase();
+  await db.runAsync(
+    `UPDATE evidence SET ${assignments.join(', ')} WHERE id = ?`,
+    values
+  );
+};
+
+export const updateEvidenceAfterRestore = async (
+  id: string,
+  filePath: string,
+  fileSize: number,
+  sha256Hash: string
+): Promise<void> => {
+  const db = await getDatabase();
+  await db.runAsync(
+    `UPDATE evidence SET file_path = ?, file_size = ?, sha256_hash = ?
+     WHERE id = ?`,
+    [filePath, fileSize, sha256Hash, id]
+  );
 };
 
 export const findDuplicateHash = async (

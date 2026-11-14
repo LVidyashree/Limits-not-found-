@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   TextStyle,
   TextInputProps,
   StatusBar,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -409,6 +410,133 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
   );
 };
 
+// ======================== PASSPHRASE PROMPT ========================
+interface PassphrasePromptProps {
+  visible: boolean;
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  loading?: boolean;
+  error?: string;
+  onCancel: () => void;
+  onSubmit: (passphrase: string) => void;
+}
+
+/**
+ * Reusable passphrase prompt for encrypted cloud backup actions. The value is
+ * held only in this component's state and is cleared on cancel or submit.
+ */
+export const PassphrasePrompt: React.FC<PassphrasePromptProps> = ({
+  visible,
+  title,
+  message,
+  confirmLabel = 'Continue',
+  loading = false,
+  error,
+  onCancel,
+  onSubmit,
+}) => {
+  const [passphrase, setPassphrase] = useState('');
+  const [showPassphrase, setShowPassphrase] = useState(false);
+
+  const resetFields = () => {
+    setPassphrase('');
+    setShowPassphrase(false);
+  };
+
+  const handleCancel = () => {
+    resetFields();
+    onCancel();
+  };
+
+  const handleSubmit = () => {
+    const value = passphrase;
+    resetFields();
+    onSubmit(value);
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onShow={resetFields}
+      onRequestClose={handleCancel}
+    >
+      <View style={styles.promptOverlay}>
+        <View style={styles.promptCard}>
+          <View style={styles.promptHeader}>
+            <View style={styles.promptIcon}>
+              <Ionicons name="key-outline" size={20} color={Colors.teal} />
+            </View>
+            <Text style={styles.promptTitle}>{title}</Text>
+          </View>
+
+          <Text style={styles.promptMessage}>{message}</Text>
+
+          <Input
+            label="Vault Passphrase"
+            placeholder="Enter your vault passphrase..."
+            secureTextEntry={!showPassphrase}
+            value={passphrase}
+            onChangeText={setPassphrase}
+            icon="lock-closed-outline"
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoFocus
+          />
+
+          <TouchableOpacity
+            style={styles.promptToggle}
+            onPress={() => setShowPassphrase((current) => !current)}
+          >
+            <Ionicons
+              name={showPassphrase ? 'eye-off-outline' : 'eye-outline'}
+              size={16}
+              color={Colors.secondaryText}
+            />
+            <Text style={styles.promptToggleText}>
+              {showPassphrase ? 'Hide Passphrase' : 'Show Passphrase'}
+            </Text>
+          </TouchableOpacity>
+
+          {error ? (
+            <View style={styles.promptError}>
+              <Ionicons name="alert-circle" size={16} color={Colors.danger} />
+              <Text style={styles.promptErrorText}>{error}</Text>
+            </View>
+          ) : null}
+
+          <Text style={styles.promptNote}>
+            Your passphrase is never stored or sent to Supabase. It is used only
+            on this device to derive the AES-256 encryption key.
+          </Text>
+
+          <View style={styles.promptActions}>
+            <Button
+              title="Cancel"
+              onPress={handleCancel}
+              variant="outline"
+              size="sm"
+              disabled={loading}
+              style={{ flex: 1, marginRight: Spacing.sm }}
+            />
+            <Button
+              title={confirmLabel}
+              onPress={handleSubmit}
+              variant="primary"
+              size="sm"
+              loading={loading}
+              disabled={!passphrase}
+              style={{ flex: 1 }}
+            />
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
 // ======================== STYLES ========================
 const styles = StyleSheet.create({
   screenWrapper: {
@@ -604,5 +732,80 @@ const styles = StyleSheet.create({
     color: Colors.teal,
     fontSize: 13,
     fontWeight: '600',
+  },
+  promptOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    justifyContent: 'center',
+    padding: Spacing.md,
+  },
+  promptCard: {
+    backgroundColor: Colors.card,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.borderTeal,
+    padding: Spacing.lg,
+  },
+  promptHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  promptIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.tealMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.sm,
+  },
+  promptTitle: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.white,
+  },
+  promptMessage: {
+    fontSize: 12,
+    color: Colors.secondaryText,
+    lineHeight: 18,
+    marginBottom: Spacing.md,
+  },
+  promptToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    marginTop: -Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  promptToggleText: {
+    fontSize: 12,
+    color: Colors.secondaryText,
+    marginLeft: 6,
+  },
+  promptError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.dangerMuted,
+    borderRadius: BorderRadius.sm,
+    padding: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  promptErrorText: {
+    flex: 1,
+    color: Colors.danger,
+    fontSize: 12,
+    marginLeft: 6,
+  },
+  promptNote: {
+    fontSize: 10.5,
+    color: Colors.secondaryText,
+    lineHeight: 15,
+    marginBottom: Spacing.md,
+  },
+  promptActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
 });

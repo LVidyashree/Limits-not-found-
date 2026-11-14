@@ -603,6 +603,220 @@ function checkOwnershipWrites() {
   );
 }
 
+function checkStorageBackupPolicies() {
+  expectValue(
+    'evidence-backups bucket exists and is private',
+    freshDb,
+    `select public from storage.buckets where id = 'evidence-backups'`,
+    'f'
+  );
+  expectValue(
+    'evidence-backups bucket enforces a 100 MiB ciphertext limit',
+    freshDb,
+    `select file_size_limit from storage.buckets where id = 'evidence-backups'`,
+    '104857600'
+  );
+  expectValue(
+    'evidence-backups bucket only allows octet-stream',
+    freshDb,
+    `select allowed_mime_types::text from storage.buckets where id = 'evidence-backups'`,
+    '{application/octet-stream}'
+  );
+  expectValue(
+    'four storage policies target the backup bucket',
+    freshDb,
+    `select count(*) from pg_policies
+      where schemaname = 'storage'
+        and tablename = 'objects'
+        and policyname in (
+          'evidence_backup_select_own', 'evidence_backup_insert_own',
+          'evidence_backup_update_own', 'evidence_backup_delete_own'
+        )`,
+    '4'
+  );
+  expectValue(
+    'evidence backup status defaults to not_backed_up',
+    freshDb,
+    `select backup_status from public.evidence where id = '${EV_A2}'`,
+    'not_backed_up'
+  );
+  expectValue(
+    'evidence backup metadata columns exist',
+    freshDb,
+    `select count(*) from information_schema.columns
+      where table_schema = 'public' and table_name = 'evidence'
+        and column_name in (
+          'backup_status', 'backup_last_success_at', 'backup_error',
+          'backup_bytes', 'backup_ciphertext_sha256'
+        )`,
+    '5'
+  );
+
+  // A second bucket proves the policies are scoped to evidence-backups.
+  expectOk(
+    'test-only decoy bucket created',
+    freshDb,
+    `insert into storage.buckets (id, name, public)
+     values ('decoy-bucket', 'decoy-bucket', false)`
+  );
+
+  // Seed B's object as the server so A has something to try to read.
+  expectOk(
+    'user B object seeded',
+    freshDb,
+    `insert into storage.objects (bucket_id, name, owner)
+     values ('evidence-backups', '${B}/${CASE_B}/${EV_B}.evb', '${B}')`
+  );
+
+  expectOk(
+    'A uploads their own encrypted envelope',
+    freshDb,
+    `insert into storage.objects (bucket_id, name, owner)
+     values ('evidence-backups', '${A}/${CASE_A2}/${EV_A2}.evb', '${A}')`,
+    { role: 'authenticated', sub: A }
+  );
+  expectValue(
+    'A sees only their own storage object',
+    freshDb,
+    `select count(*) from storage.objects where bucket_id = 'evidence-backups'`,
+    '1',
+    { role: 'authenticated', sub: A }
+  );
+  expectValue(
+    'A cannot select B storage object by name',
+    freshDb,
+    `select count(*) from storage.objects
+      where name = '${B}/${CASE_B}/${EV_B}.evb'`,
+    '0',
+    { role: 'authenticated', sub: A }
+  );
+
+  expectFail(
+    'A cannot upload under another user id',
+    freshDb,
+    `insert into storage.objects (bucket_id, name, owner)
+     values ('evidence-backups', '${B}/${CASE_B}/forged.evb', '${A}')`,
+    'row-level security',
+    { role: 'authenticated', sub: A }
+  );
+  expectFail(
+    'A cannot upload under another user case',
+    freshDb,
+    `insert into storage.objects (bucket_id, name, owner)
+     values ('evidence-backups', '${A}/${CASE_B}/forged.evb', '${A}')`,
+    'row-level security',
+    { role: 'authenticated', sub: A }
+  );
+  expectFail(
+    'A cannot upload a plaintext-looking filename',
+    freshDb,
+    `insert into storage.objects (bucket_id, name, owner)
+     values ('evidence-backups', '${A}/${CASE_A2}/plain.pdf', '${A}')`,
+    'row-level security',
+    { role: 'authenticated', sub: A }
+  );
+  expectFail(
+    'A cannot upload into the decoy bucket',
+    freshDb,
+    `insert into storage.objects (bucket_id, name, owner)
+     values ('decoy-bucket', '${A}/${CASE_A2}/${EV_A2}.evb', '${A}')`,
+    'row-level security',
+    { role: 'authenticated', sub: A }
+  );
+  expectFail(
+    'A cannot move their object under another case',
+    freshDb,
+    `update storage.objects
+        set name = '${A}/${CASE_B}/moved.evb'
+      where name = '${A}/${CASE_A2}/${EV_A2}.evb'`,
+    'row-level security',
+    { role: 'authenticated', sub: A }
+  );
+  expectValue(
+    'A cannot update B object',
+    freshDb,
+    `update storage.objects
+        set metadata = '{"tampered":true}'::jsonb
+      where name = '${B}/${CASE_B}/${EV_B}.evb'
+      returning id`,
+    '',
+    { role: 'authenticated', sub: A }
+  );
+  expectValue(
+    'A cannot delete B object',
+    freshDb,
+    `delete from storage.objects
+      where name = '${B}/${CASE_B}/${EV_B}.evb'
+      returning id`,
+    '',
+    { role: 'authenticated', sub: A }
+  );
+  expectValue(
+    'B object survived A delete attempt',
+    freshDb,
+    `select count(*) from storage.objects
+      where name = '${B}/${CASE_B}/${EV_B}.evb'`,
+    '1'
+  );
+  expectOk(
+    'A can update their own object metadata',
+    freshDb,
+    `update storage.objects
+        set metadata = '{"verified":true}'::jsonb
+      where name = '${A}/${CASE_A2}/${EV_A2}.evb'`,
+    { role: 'authenticated', sub: A }
+  );
+  expectOk(
+    'A can delete their own object',
+    freshDb,
+    `delete from storage.objects
+      where name = '${A}/${CASE_A2}/${EV_A2}.evb'`,
+    { role: 'authenticated', sub: A }
+  );
+  expectValue(
+    'anon sees no storage objects',
+    freshDb,
+    `select count(*) from storage.objects`,
+    '0',
+    { role: 'anon' }
+  );
+  expectFail(
+    'anon cannot insert storage objects',
+    freshDb,
+    `insert into storage.objects (bucket_id, name)
+     values ('evidence-backups', '${A}/${CASE_A2}/anon.evb')`,
+    'row-level security',
+    { role: 'anon' }
+  );
+
+  expectFail(
+    'invalid backup status is rejected',
+    freshDb,
+    `insert into public.evidence
+       (case_id, original_filename, file_size, storage_path, sha256_hash, backup_status)
+     values ('${CASE_A2}', 'bad-status.evb', 1,
+             '${A}/${CASE_A2}/bad-status.evb', '${HASH}', 'bogus')`,
+    'evidence_backup_status_valid|check constraint',
+    { role: 'authenticated', sub: A }
+  );
+  expectFail(
+    'encrypted backup hash must be lowercase sha256',
+    freshDb,
+    `update public.evidence
+        set backup_ciphertext_sha256 = '${'A'.repeat(64)}'
+      where id = '${EV_A2}'`,
+    'evidence_backup_ciphertext_sha256_format|check constraint',
+    { role: 'authenticated', sub: A }
+  );
+  expectFail(
+    'encrypted backup size cannot be negative',
+    freshDb,
+    `update public.evidence set backup_bytes = -1 where id = '${EV_A2}'`,
+    'evidence_backup_bytes_nonneg|check constraint',
+    { role: 'authenticated', sub: A }
+  );
+}
+
 function checkAudit() {
   expectOk(
     'A appends an audit event for their own case and evidence',
@@ -923,6 +1137,9 @@ function main() {
 
   console.log('\nFresh schema: audit events');
   checkAudit();
+
+  console.log('\nFresh schema: encrypted backup bucket and storage RLS');
+  checkStorageBackupPolicies();
 
   console.log('\nFresh schema: constraints and timestamps');
   checkConstraints();
