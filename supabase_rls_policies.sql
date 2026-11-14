@@ -1,0 +1,13 @@
+-- ============================================================
+-- DEPRECATED — DO NOT RUN THIS FILE
+--
+-- The reviewed RLS policies now live in:
+--
+--   supabase/migrations/20261114090300_enable_evidencevault_rls.sql
+--
+-- That migration enables RLS, drops any stale policies, creates
+-- owner-only policies for every table, and restricts anon /
+-- authenticated privileges. It is safe to re-run.
+--
+-- See supabase/README.md for the full schema and policy reference.
+-- ============================================================

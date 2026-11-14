@@ -4,9 +4,32 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { RootNavigator } from './src/navigation';
+import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { Colors } from './src/theme';
 import { getDatabase } from './src/services/database';
 import { initStorage } from './src/services/storage';
+
+const Splash: React.FC<{ text: string }> = ({ text }) => (
+  <View style={styles.splashContainer}>
+    <ActivityIndicator size="large" color={Colors.teal} />
+    <Text style={styles.splashText}>{text}</Text>
+  </View>
+);
+
+const AppGate: React.FC = () => {
+  const { initializing } = useAuth();
+
+  if (initializing) {
+    return <Splash text="Restoring secure session..." />;
+  }
+
+  return (
+    <NavigationContainer>
+      <StatusBar style="light" />
+      <RootNavigator />
+    </NavigationContainer>
+  );
+};
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -29,20 +52,18 @@ export default function App() {
   }, []);
 
   if (!ready) {
-    return (
-      <View style={styles.splashContainer}>
-        <ActivityIndicator size="large" color={Colors.teal} />
-        <Text style={styles.splashText}>Initializing Offline Vault...</Text>
-      </View>
-    );
+    return <Splash text="Initializing Offline Vault..." />;
+  }
+
+  if (initError) {
+    console.warn('Vault initialized with an error:', initError);
   }
 
   return (
     <SafeAreaProvider>
-      <NavigationContainer>
-        <StatusBar style="light" />
-        <RootNavigator />
-      </NavigationContainer>
+      <AuthProvider>
+        <AppGate />
+      </AuthProvider>
     </SafeAreaProvider>
   );
 }

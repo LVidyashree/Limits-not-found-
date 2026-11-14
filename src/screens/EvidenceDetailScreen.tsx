@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   Image,
-  TouchableOpacity,
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,6 +18,7 @@ import {
   Button,
   Badge,
   SectionHeader,
+  PassphrasePrompt,
 } from '../components';
 import {
   getEvidenceById,
@@ -32,9 +32,21 @@ import {
   deleteFileLocally,
   readTextFromFile,
 } from '../services/storage';
+import {
+  BACKUP_STATUS_LABELS,
+  backupEvidenceToCloud,
+  backupStatusBadgeType,
+  deleteCloudBackup,
+  restoreCloudBackup,
+} from '../services/backupService';
 import { runEvidenceAnalysis } from '../services/analysisEngine';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EvidenceDetail'>;
+
+type BackupPromptAction = 'backup' | 'restore';
+
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
 
 export const EvidenceDetailScreen: React.FC<Props> = ({ route, navigation }) => {
   const { evidenceId, caseId } = route.params;
@@ -48,11 +60,12 @@ export const EvidenceDetailScreen: React.FC<Props> = ({ route, navigation }) => 
     hash: string;
   }>({ tested: false, valid: false, hash: '' });
 
-  useEffect(() => {
-    loadData();
-  }, [evidenceId]);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupPromptAction, setBackupPromptAction] =
+    useState<BackupPromptAction | null>(null);
+  const [backupPromptError, setBackupPromptError] = useState('');
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const ev = await getEvidenceById(evidenceId);
       if (ev) {
@@ -68,7 +81,14 @@ export const EvidenceDetailScreen: React.FC<Props> = ({ route, navigation }) => 
     } catch (err) {
       console.error('Failed to load evidence detail:', err);
     }
-  };
+  }, [evidenceId]);
+
+  useEffect(() => {
+    const init = async () => {
+      await loadData();
+    };
+    void init();
+  }, [loadData]);
 
   const handleAuditIntegrity = async () => {
     if (!evidence) return;
@@ -100,6 +120,104 @@ export const EvidenceDetailScreen: React.FC<Props> = ({ route, navigation }) => 
     } finally {
       setVerifyingHash(false);
     }
+  };
+
+  const openBackupPrompt = (action: BackupPromptAction) => {
+    setBackupPromptError('');
+    setBackupPromptAction(action);
+  };
+
+  const handleRunBackup = async (passphrase: string) => {
+    if (!evidence) return;
+    setBackupBusy(true);
+    setBackupPromptError('');
+
+    try {
+      const outcome = await backupEvidenceToCloud(evidence.id, passphrase);
+      setBackupPromptAction(null);
+      await loadData();
+      Alert.alert(
+        'Encrypted Backup Confirmed',
+        `Supabase confirmed the upload at ${new Date(
+          outcome.backedUpAt
+        ).toLocaleString()}.\n\nStored ciphertext: ${formatBytes(
+          outcome.ciphertextBytes
+        )}\nCiphertext SHA-256:\n${outcome.ciphertextSha256.slice(
+          0,
+          32
+        )}...\n\nOnly encrypted bytes were uploaded. Your passphrase never left this device.`
+      );
+    } catch (err) {
+      setBackupPromptError(errorMessage(err));
+      await loadData();
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const handleRunRestore = async (passphrase: string) => {
+    if (!evidence?.cloud_evidence_id) {
+      setBackupPromptError('This evidence item has no cloud backup to restore.');
+      return;
+    }
+
+    setBackupBusy(true);
+    setBackupPromptError('');
+
+    try {
+      const outcome = await restoreCloudBackup(
+        evidence.cloud_evidence_id,
+        passphrase
+      );
+      setBackupPromptAction(null);
+      await loadData();
+      Alert.alert(
+        'Restore Verified',
+        `The backup was decrypted and verified with two independent checks.\n\nEnvelope SHA-256:\n${outcome.plaintextSha256.slice(
+          0,
+          32
+        )}...\n\nOn-disk recorded SHA-256:\n${outcome.legacySha256.slice(
+          0,
+          32
+        )}...\n\nThe restored file is now open in your vault.`
+      );
+    } catch (err) {
+      setBackupPromptError(errorMessage(err));
+      await loadData();
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const handleDeleteBackup = () => {
+    if (!evidence?.cloud_evidence_id) return;
+
+    Alert.alert(
+      'Delete Encrypted Cloud Backup',
+      'This removes the encrypted backup object from Supabase. Your local evidence file and its SHA-256 record stay on this device. This cannot be undone for the cloud copy.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Cloud Backup',
+          style: 'destructive',
+          onPress: async () => {
+            setBackupBusy(true);
+            try {
+              await deleteCloudBackup(evidence.id);
+              await loadData();
+              Alert.alert(
+                'Cloud Backup Deleted',
+                'Supabase confirmed the encrypted object was removed. The local evidence file is unchanged.'
+              );
+            } catch (err) {
+              Alert.alert('Delete Failed', errorMessage(err));
+            } finally {
+              setBackupBusy(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleReanalyze = async () => {
@@ -226,6 +344,104 @@ export const EvidenceDetailScreen: React.FC<Props> = ({ route, navigation }) => 
           />
         </Card>
 
+        {/* Optional Encrypted Cloud Backup */}
+        <Card style={styles.backupCard}>
+          <View style={styles.backupHeader}>
+            <View style={styles.backupTitleRow}>
+              <Ionicons name="cloud-upload-outline" size={18} color={Colors.teal} />
+              <Text style={styles.backupTitle}>Encrypted Cloud Backup</Text>
+            </View>
+            <Badge
+              label={BACKUP_STATUS_LABELS[evidence.backup_status ?? 'not_backed_up']}
+              type={backupStatusBadgeType(
+                evidence.backup_status ?? 'not_backed_up'
+              )}
+            />
+          </View>
+
+          <Text style={styles.backupDescription}>
+            Optional and off by default. The file is encrypted on this device
+            with AES-256-GCM using an Argon2id-derived key before upload. Only
+            ciphertext is stored in Supabase; your passphrase and raw key never
+            leave this device.
+          </Text>
+
+          <View style={styles.metaRow}>
+            <Text style={styles.metaKey}>Last successful backup:</Text>
+            <Text style={styles.metaVal}>
+              {evidence.backup_last_at
+                ? new Date(evidence.backup_last_at).toLocaleString()
+                : 'Never'}
+            </Text>
+          </View>
+
+          {evidence.backup_bytes ? (
+            <View style={styles.metaRow}>
+              <Text style={styles.metaKey}>Encrypted size on server:</Text>
+              <Text style={styles.metaVal}>
+                {formatBytes(evidence.backup_bytes)}
+              </Text>
+            </View>
+          ) : null}
+
+          {evidence.backup_storage_path ? (
+            <Text style={styles.backupPath} numberOfLines={1} selectable>
+              {evidence.backup_storage_path}
+            </Text>
+          ) : null}
+
+          {evidence.backup_error ? (
+            <View style={styles.backupErrorBox}>
+              <Ionicons name="alert-circle" size={15} color={Colors.danger} />
+              <Text style={styles.backupErrorText}>{evidence.backup_error}</Text>
+            </View>
+          ) : null}
+
+          <Button
+            title={
+              evidence.backup_status === 'backed_up'
+                ? 'Back Up Again'
+                : 'Back Up Now'
+            }
+            onPress={() => openBackupPrompt('backup')}
+            loading={backupBusy && backupPromptAction === null}
+            disabled={backupBusy}
+            variant="primary"
+            icon="cloud-upload-outline"
+            style={{ marginTop: Spacing.sm }}
+          />
+
+          {evidence.cloud_evidence_id &&
+          (evidence.backup_status === 'backed_up' || evidence.backup_last_at) ? (
+            <Button
+              title="Restore From Cloud"
+              onPress={() => openBackupPrompt('restore')}
+              disabled={backupBusy}
+              variant="outline"
+              icon="cloud-download-outline"
+              style={{ marginTop: Spacing.sm }}
+            />
+          ) : null}
+
+          {evidence.cloud_evidence_id &&
+          evidence.backup_status === 'backed_up' ? (
+            <Button
+              title="Delete Cloud Backup"
+              onPress={handleDeleteBackup}
+              disabled={backupBusy}
+              variant="danger"
+              icon="cloud-offline-outline"
+              style={{ marginTop: Spacing.sm }}
+            />
+          ) : null}
+
+          <Text style={styles.backupRecoveryNote}>
+            Recovery key: your vault passphrase is also the key that unlocks
+            these backups. It is never stored or sent to Supabase. If you lose
+            it, encrypted cloud backups cannot be restored.
+          </Text>
+        </Card>
+
         {/* Custody Metadata Card */}
         <Card>
           <Text style={styles.cardSectionTitle}>Custody Metadata</Text>
@@ -308,7 +524,7 @@ export const EvidenceDetailScreen: React.FC<Props> = ({ route, navigation }) => 
                   </Text>
                   {f.context_snippet ? (
                     <Text style={styles.findingSnippet} numberOfLines={2}>
-                      "{f.context_snippet}"
+                      &quot;{f.context_snippet}&quot;
                     </Text>
                   ) : null}
                 </View>
@@ -333,6 +549,35 @@ export const EvidenceDetailScreen: React.FC<Props> = ({ route, navigation }) => 
           ))
         )}
       </ScrollView>
+
+      <PassphrasePrompt
+        visible={backupPromptAction !== null}
+        title={
+          backupPromptAction === 'restore'
+            ? 'Restore Encrypted Backup'
+            : 'Encrypt & Upload Backup'
+        }
+        message={
+          backupPromptAction === 'restore'
+            ? 'Enter the vault passphrase that was used when this backup was encrypted. It is used only on this device to derive the decryption key.'
+            : 'Enter your vault passphrase. It is checked against your vault and used locally to derive the AES-256-GCM key before anything is uploaded.'
+        }
+        confirmLabel={backupPromptAction === 'restore' ? 'Decrypt & Restore' : 'Encrypt & Upload'}
+        loading={backupBusy}
+        error={backupPromptError}
+        onCancel={() => {
+          if (backupBusy) return;
+          setBackupPromptAction(null);
+          setBackupPromptError('');
+        }}
+        onSubmit={(passphrase) => {
+          if (backupPromptAction === 'backup') {
+            void handleRunBackup(passphrase);
+          } else if (backupPromptAction === 'restore') {
+            void handleRunRestore(passphrase);
+          }
+        }}
+      />
     </ScreenWrapper>
   );
 };
@@ -413,6 +658,62 @@ const styles = StyleSheet.create({
     color: Colors.secondaryText,
     marginTop: 6,
     lineHeight: 16,
+  },
+  backupCard: {
+    backgroundColor: Colors.secondaryBackground,
+    borderColor: Colors.borderTeal,
+  },
+  backupHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  backupTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: Spacing.sm,
+  },
+  backupTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.teal,
+    marginLeft: 6,
+  },
+  backupDescription: {
+    fontSize: 11,
+    color: Colors.secondaryText,
+    lineHeight: 16,
+    marginBottom: Spacing.sm,
+  },
+  backupPath: {
+    ...Typography.mono,
+    fontSize: 10,
+    color: Colors.secondaryText,
+    marginTop: 6,
+  },
+  backupErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: Colors.dangerMuted,
+    borderRadius: BorderRadius.sm,
+    padding: Spacing.sm,
+    marginTop: Spacing.sm,
+  },
+  backupErrorText: {
+    flex: 1,
+    color: Colors.danger,
+    fontSize: 11,
+    lineHeight: 15,
+    marginLeft: 6,
+  },
+  backupRecoveryNote: {
+    fontSize: 10.5,
+    color: Colors.secondaryText,
+    lineHeight: 15,
+    marginTop: Spacing.sm,
+    fontStyle: 'italic',
   },
   cardSectionTitle: {
     fontSize: 13,

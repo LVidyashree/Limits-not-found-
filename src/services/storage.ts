@@ -145,8 +145,7 @@ export const saveTextAsEvidenceFile = async (
   filename: string;
   size: number;
   sha256: string;
-}> => {
-  await initStorage();
+}> => {  await initStorage();
 
   const timestamp = Date.now();
   const randomSuffix = Math.random().toString(36).substring(2, 8);
@@ -159,6 +158,58 @@ export const saveTextAsEvidenceFile = async (
   await destinationFile.write(content);
 
   const fileSize = destinationFile.size ?? content.length;
+  const sha256 = await computeFileSha256(destinationFile.uri);
+
+  return {
+    localPath: destinationFile.uri,
+    filename: secureFilename,
+    size: fileSize,
+    sha256,
+  };
+};
+
+/**
+ * Read a raw file as bytes. Used by encrypted cloud backup; no text
+ * transformations are applied.
+ */
+export const readFileBytes = async (filePath: string): Promise<Uint8Array> => {
+  const file = new File(filePath);
+  if (!file.exists) {
+    throw new Error('Evidence file is missing from this device');
+  }
+  return file.bytes();
+};
+
+/**
+ * Write decrypted backup bytes back into the isolated evidence sandbox.
+ * The legacy per-file SHA-256 digest is recomputed with the same helper the
+ * rest of the app uses, so a restored file verifies against the recorded
+ * `evidence.sha256_hash` value.
+ */
+export const saveRestoredEvidenceFile = async (
+  originalFilename: string,
+  bytes: Uint8Array
+): Promise<{
+  localPath: string;
+  filename: string;
+  size: number;
+  sha256: string;
+}> => {
+  await initStorage();
+
+  const cleanExt = originalFilename.includes('.')
+    ? '.' + originalFilename.split('.').pop()?.toLowerCase()
+    : '';
+  const timestamp = Date.now();
+  const randomSuffix = Math.random().toString(36).substring(2, 8);
+  const secureFilename = `restored_${timestamp}_${randomSuffix}${cleanExt}`;
+
+  const evDir = getEvidenceDirectoryObj();
+  const destinationFile = new File(evDir, secureFilename);
+
+  await destinationFile.write(bytes);
+
+  const fileSize = destinationFile.size ?? bytes.length;
   const sha256 = await computeFileSha256(destinationFile.uri);
 
   return {

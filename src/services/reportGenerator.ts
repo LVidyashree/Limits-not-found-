@@ -1,5 +1,5 @@
 import * as Print from 'expo-print';
-import * as Sharing from 'expo-sharing';
+import { shareAsync } from 'expo-sharing';
 import { Case, Evidence, Finding, TimelineEvent } from '../types';
 import { formatBytes } from './storage';
 import { logActivity } from './database';
@@ -356,15 +356,14 @@ export const exportReportAsPdf = async (data: ReportData): Promise<string> => {
 };
 
 export const shareReportPdf = async (pdfUri: string): Promise<void> => {
-  const isAvailable = await Sharing.isAvailableAsync();
-  if (!isAvailable) {
-    throw new Error('Native file sharing is not available on this device');
+  try {
+    await shareAsync(pdfUri, {
+      mimeType: 'application/pdf',
+      dialogTitle: 'Export EvidenceVault Incident Report',
+    });
+  } catch (err) {
+    console.error('Share failed:', err);
+    throw err;
   }
-
-  await Sharing.shareAsync(pdfUri, {
-    UTI: '.pdf',
-    mimeType: 'application/pdf',
-    dialogTitle: 'Export EvidenceVault Incident Report',
-  });
 };
 

@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Alert,
   RefreshControl,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -14,6 +15,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
   RootStackParamList,
   Case,
+  CaseStatus,
   Evidence,
   Finding,
   TimelineEvent,
@@ -33,11 +35,16 @@ import {
   getEvidenceByCase,
   getFindingsByCase,
   getEventsByCase,
-  deleteCase,
 } from '../services/database';
+import {
+  deleteCaseWithCloud,
+  updateCaseStatusWithCloud,
+} from '../services/caseService';
 import { formatBytes } from '../services/storage';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CaseDetail'>;
+
+const STATUS_OPTIONS: CaseStatus[] = ['active', 'closed', 'archived'];
 
 export const CaseDetailScreen: React.FC<Props> = ({ route, navigation }) => {
   const { caseId } = route.params;
@@ -46,8 +53,12 @@ export const CaseDetailScreen: React.FC<Props> = ({ route, navigation }) => {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [statusSaving, setStatusSaving] = useState(false);
 
-  const loadCaseData = async () => {
+  const loadCaseData = useCallback(async () => {
+    setLoadError(null);
     try {
       const [c, ev, fnd, evt] = await Promise.all([
         getCaseById(caseId),
@@ -59,15 +70,22 @@ export const CaseDetailScreen: React.FC<Props> = ({ route, navigation }) => {
       setEvidenceList(ev);
       setFindings(fnd);
       setEvents(evt);
+      if (!c) {
+        setLoadError('This case could not be found on this device.');
+      }
     } catch (err) {
-      console.error('Failed to load case detail:', err);
+      setLoadError(
+        err instanceof Error ? err.message : 'Could not load this case.'
+      );
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [caseId]);
 
   useFocusEffect(
     useCallback(() => {
       loadCaseData();
-    }, [caseId])
+    }, [loadCaseData])
   );
 
   const onRefresh = async () => {
@@ -76,30 +94,91 @@ export const CaseDetailScreen: React.FC<Props> = ({ route, navigation }) => {
     setRefreshing(false);
   };
 
+  const handleStatusChange = async (nextStatus: CaseStatus) => {
+    if (!caseItem || statusSaving || caseItem.status === nextStatus) return;
+
+    setStatusSaving(true);
+    try {
+      const result = await updateCaseStatusWithCloud(caseId, nextStatus);
+      setCaseItem(result.localCase);
+
+      if (result.cloudSynced) {
+        Alert.alert(
+          'Status Updated',
+          `This case is now marked ${nextStatus.toUpperCase()} and the change was saved to your account.`
+        );
+      } else if (result.cloudError) {
+        Alert.alert(
+          'Saved Locally',
+          `The status was saved on this device, but the account sync failed: ${result.cloudError}`
+        );
+      } else {
+        Alert.alert(
+          'Status Updated',
+          `This case is now marked ${nextStatus.toUpperCase()} on this device.`
+        );
+      }
+    } catch (err) {
+      Alert.alert(
+        'Status Update Failed',
+        err instanceof Error ? err.message : 'Could not update the case status.'
+      );
+    } finally {
+      setStatusSaving(false);
+    }
+  };
+
   const handleDelete = () => {
     Alert.alert(
       'Delete Incident Record',
-      `Are you sure you want to delete "${caseItem?.title}"? All associated evidence metadata and timeline records will be permanently removed.`,
+      `Are you sure you want to delete "${caseItem?.title}"? All associated evidence metadata and timeline records will be permanently removed, and the case will also be deleted from your signed-in account.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete Permanently',
           style: 'destructive',
           onPress: async () => {
-            await deleteCase(caseId);
-            navigation.goBack();
+            try {
+              await deleteCaseWithCloud(caseId);
+              navigation.goBack();
+            } catch (err) {
+              Alert.alert(
+                'Delete Failed',
+                err instanceof Error
+                  ? err.message
+                  : 'Could not delete this case.'
+              );
+            }
           },
         },
       ]
     );
   };
 
-  if (!caseItem) {
+  if (loading) {
     return (
       <ScreenWrapper>
         <Header title="Case Record" onBack={() => navigation.goBack()} />
         <View style={styles.centerContainer}>
+          <ActivityIndicator color={Colors.teal} />
           <Text style={styles.loadingText}>Loading incident records...</Text>
+        </View>
+      </ScreenWrapper>
+    );
+  }
+
+  if (!caseItem) {
+    return (
+      <ScreenWrapper>
+        <Header title="Case Record" onBack={() => navigation.goBack()} />
+        <View style={styles.emptyContainer}>
+          <EmptyState
+            icon="alert-circle-outline"
+            title="Case Not Available"
+            description={loadError ?? 'This case is no longer on this device.'}
+            actionTitle="Try Again"
+            onAction={loadCaseData}
+          />
         </View>
       </ScreenWrapper>
     );
@@ -195,6 +274,55 @@ export const CaseDetailScreen: React.FC<Props> = ({ route, navigation }) => {
               <Text style={styles.descText}>{caseItem.description}</Text>
             </View>
           ) : null}
+        </Card>
+
+        {/* Case Management Actions */}
+        <Card style={styles.actionsCard}>
+          <View style={styles.actionsHeader}>
+            <Text style={styles.actionsTitle}>Case Management</Text>
+            {statusSaving ? (
+              <ActivityIndicator color={Colors.teal} size="small" />
+            ) : null}
+          </View>
+
+          <Button
+            title="Edit Case Details"
+            onPress={() => navigation.navigate('CreateIncident', { caseId })}
+            variant="outline"
+            size="sm"
+            icon="create-outline"
+            disabled={statusSaving}
+            style={{ marginBottom: Spacing.sm }}
+          />
+
+          <Text style={styles.statusLabel}>Update Case Status</Text>
+          <View style={styles.statusRow}>
+            {STATUS_OPTIONS.map((status) => {
+              const selected = caseItem.status === status;
+              return (
+                <TouchableOpacity
+                  key={status}
+                  activeOpacity={0.8}
+                  disabled={statusSaving}
+                  onPress={() => handleStatusChange(status)}
+                  style={[
+                    styles.statusPill,
+                    selected && styles.statusPillSelected,
+                    statusSaving && styles.statusPillDisabled,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.statusPillText,
+                      selected && styles.statusPillTextSelected,
+                    ]}
+                  >
+                    {status.toUpperCase()}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </Card>
 
         {/* Fast Action Hub */}
@@ -360,9 +488,65 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+  },
   loadingText: {
     color: Colors.secondaryText,
     fontSize: 14,
+    marginTop: Spacing.sm,
+  },
+  actionsCard: {
+    backgroundColor: Colors.secondaryBackground,
+    borderColor: Colors.borderTeal,
+    marginBottom: Spacing.sm,
+  },
+  actionsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
+  },
+  actionsTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.white,
+  },
+  statusLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.secondaryText,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  statusRow: {
+    flexDirection: 'row',
+  },
+  statusPill: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: BorderRadius.sm,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginHorizontal: 3,
+  },
+  statusPillSelected: {
+    backgroundColor: Colors.tealMuted,
+    borderColor: Colors.teal,
+  },
+  statusPillDisabled: {
+    opacity: 0.6,
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.secondaryText,
+  },
+  statusPillTextSelected: {
+    color: Colors.tealLight,
   },
   demoBanner: {
     flexDirection: 'row',

@@ -9,6 +9,12 @@ export type VerificationStatus = 'needs_verification' | 'verified' | 'rejected';
 
 export type EventSource = 'extracted' | 'manual';
 
+export type BackupStatus =
+  | 'not_backed_up'
+  | 'uploading'
+  | 'backed_up'
+  | 'failed';
+
 export interface Case {
   id: string;
   title: string;
@@ -23,6 +29,8 @@ export interface Case {
   is_demo: number;
   created_at: string;
   updated_at: string;
+  /** UUID of the corresponding row in Supabase, when cloud backup is used. */
+  cloud_case_id?: string | null;
 }
 
 export interface Evidence {
@@ -40,6 +48,20 @@ export interface Evidence {
   metadata_json: string | null;
   created_at: string;
   is_verified: number;
+  /** UUID of the corresponding Supabase evidence row, when backed up. */
+  cloud_evidence_id?: string | null;
+  /** UUID of the Supabase case row used for the backup path. */
+  cloud_case_id?: string | null;
+  backup_status?: BackupStatus;
+  /** Last confirmed successful upload (ISO 8601). */
+  backup_last_at?: string | null;
+  backup_error?: string | null;
+  /** Object path inside the private `evidence-backups` bucket. */
+  backup_storage_path?: string | null;
+  /** Size of the encrypted envelope on the server. */
+  backup_bytes?: number | null;
+  /** SHA-256 of the encrypted envelope, used to check downloads. */
+  backup_ciphertext_sha256?: string | null;
 }
 
 export interface Finding {

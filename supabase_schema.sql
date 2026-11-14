@@ -1,0 +1,15 @@
+-- ============================================================
+-- DEPRECATED — DO NOT RUN THIS FILE
+--
+-- This was an early draft schema with text ids and a permissive
+-- policy set. It has been replaced by versioned migrations:
+--
+--   supabase/migrations/20261114090000_archive_legacy_draft_tables.sql
+--   supabase/migrations/20261114090100_create_evidencevault_tables.sql
+--   supabase/migrations/20261114090200_create_evidencevault_indexes.sql
+--   supabase/migrations/20261114090300_enable_evidencevault_rls.sql
+--
+-- Apply the migrations in order instead. See supabase/README.md.
+-- Running this file against a project that already has the reviewed
+-- schema will fail (or, worse, reintroduce permissive policies).
+-- ============================================================

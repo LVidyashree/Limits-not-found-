@@ -89,7 +89,7 @@ export const ReportScreen: React.FC<Props> = ({ route, navigation }) => {
 
       Alert.alert(
         'PDF Report Generated',
-        'Your official incident report has been rendered locally as a sealed PDF document. Would you like to save or share it now?',
+        'Your official incident report has been rendered locally as a sealed PDF document.',
         [
           { text: 'Keep in Vault' },
           {
@@ -131,6 +131,7 @@ export const ReportScreen: React.FC<Props> = ({ route, navigation }) => {
 
   const verifiedFindings = findings.filter((f) => f.verification_status === 'verified');
   const pendingFindings = findings.filter((f) => f.verification_status === 'needs_verification');
+  const totalEvidenceSize = evidenceList.reduce((sum, ev) => sum + ev.file_size, 0);
 
   return (
     <ScreenWrapper>
@@ -146,15 +147,18 @@ export const ReportScreen: React.FC<Props> = ({ route, navigation }) => {
       />
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Customization Settings */}
+        {/* Configuration Card */}
         <Card style={styles.configCard}>
-          <Text style={styles.configTitle}>Report Parameters</Text>
+          <View style={styles.configHeader}>
+            <Ionicons name="settings-outline" size={18} color={Colors.teal} />
+            <Text style={styles.configTitle}>Report Settings</Text>
+          </View>
 
           <View style={styles.switchRow}>
             <View style={{ flex: 1, marginRight: Spacing.sm }}>
               <Text style={styles.switchLabel}>Include Pending Items</Text>
               <Text style={styles.switchSub}>
-                List items requiring further verification in section 4
+                Show unverified findings in the report
               </Text>
             </View>
             <Switch
@@ -166,13 +170,13 @@ export const ReportScreen: React.FC<Props> = ({ route, navigation }) => {
           </View>
 
           <Input
-            label="Additional Investigator Remarks"
-            placeholder="Add concluding remarks, legal notes, or instructions for investigating officer..."
+            label="Investigator Remarks"
+            placeholder="Add concluding notes or instructions..."
             value={officerNotes}
             onChangeText={setOfficerNotes}
             multiline
-            numberOfLines={3}
-            style={{ height: 75, textAlignVertical: 'top', marginTop: 4 }}
+            numberOfLines={2}
+            style={{ height: 60, textAlignVertical: 'top', marginTop: 4 }}
           />
 
           <View style={styles.exportActionRow}>
@@ -197,154 +201,146 @@ export const ReportScreen: React.FC<Props> = ({ route, navigation }) => {
           </View>
         </Card>
 
-        {/* In-App Live Report Preview */}
-        <View style={styles.previewContainer}>
-          <View style={styles.previewHeaderBar}>
-            <View>
-              <Text style={styles.docBrand}>EVIDENCEVAULT</Text>
-              <Text style={styles.docTagline}>
-                YOUR EVIDENCE. YOUR CONTROL. AI-ASSISTED CLARITY.
-              </Text>
+        {/* Report Summary — replaces the huge inline PDF preview */}
+        <Card style={styles.summaryCard}>
+          <View style={styles.summaryHeader}>
+            <View style={styles.summaryBrandRow}>
+              <Ionicons name="shield-checkmark" size={20} color={Colors.teal} />
+              <View style={{ marginLeft: Spacing.sm }}>
+                <Text style={styles.summaryBrand}>EVIDENCEVAULT</Text>
+                <Text style={styles.summaryTagline}>OFFICIAL INCIDENT REPORT</Text>
+              </View>
             </View>
             <Badge label="OFFLINE SEALED" type="teal" />
           </View>
 
-          {caseItem.is_demo ? (
-            <View style={styles.demoWarningBanner}>
-              <Text style={styles.demoWarningText}>
-                ⚠️ DEMONSTRATION CASE — CONTAINS SYNTHETIC FICTIONAL DATA
+          <View style={styles.summaryDivider} />
+
+          {/* Case info row */}
+          <View style={styles.summarySection}>
+            <Text style={styles.summaryLabel}>Case</Text>
+            <Text style={styles.summaryValue}>{caseItem.title}</Text>
+          </View>
+
+          <View style={styles.summaryTwoCol}>
+            <View style={styles.summaryCol}>
+              <Text style={styles.summaryLabel}>Category</Text>
+              <Text style={styles.summaryValueSmall}>{caseItem.category}</Text>
+            </View>
+            <View style={styles.summaryCol}>
+              <Text style={styles.summaryLabel}>Status</Text>
+              <Text style={[styles.summaryValueSmall, { color: Colors.teal }]}>
+                {caseItem.status.toUpperCase()}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.summaryTwoCol}>
+            <View style={styles.summaryCol}>
+              <Text style={styles.summaryLabel}>Date</Text>
+              <Text style={styles.summaryValueSmall}>
+                {caseItem.incident_date} {caseItem.incident_time || ''}
+              </Text>
+            </View>
+            <View style={styles.summaryCol}>
+              <Text style={styles.summaryLabel}>Platform</Text>
+              <Text style={styles.summaryValueSmall}>{caseItem.platform}</Text>
+            </View>
+          </View>
+
+          <View style={styles.summaryDivider} />
+
+          {/* Stats grid */}
+          <Text style={styles.summarySectionTitle}>Report Contents</Text>
+          <View style={styles.statsGrid}>
+            <View style={styles.statBox}>
+              <Ionicons name="document-lock-outline" size={18} color={Colors.teal} />
+              <Text style={styles.statValue}>{evidenceList.length}</Text>
+              <Text style={styles.statLabel}>Evidence Files</Text>
+              <Text style={styles.statSub}>{formatBytes(totalEvidenceSize)} total</Text>
+            </View>
+            <View style={styles.statBox}>
+              <Ionicons name="checkmark-done-circle-outline" size={18} color={Colors.success} />
+              <Text style={styles.statValue}>{verifiedFindings.length}</Text>
+              <Text style={styles.statLabel}>Verified Findings</Text>
+              <Text style={styles.statSub}>{pendingFindings.length} pending</Text>
+            </View>
+            <View style={styles.statBox}>
+              <Ionicons name="time-outline" size={18} color={Colors.blue} />
+              <Text style={styles.statValue}>{events.length}</Text>
+              <Text style={styles.statLabel}>Timeline Events</Text>
+              <Text style={styles.statSub}>chronological entries</Text>
+            </View>
+            <View style={styles.statBox}>
+              <Ionicons name="finger-print" size={18} color={Colors.tealLight} />
+              <Text style={styles.statValue}>{evidenceList.length}</Text>
+              <Text style={styles.statLabel}>SHA-256 Hashes</Text>
+              <Text style={styles.statSub}>bit-level custody</Text>
+            </View>
+          </View>
+
+          <View style={styles.summaryDivider} />
+
+          {/* Integrity note */}
+          <View style={styles.integrityNote}>
+            <Ionicons name="shield-outline" size={14} color={Colors.teal} />
+            <Text style={styles.integrityText}>
+              PDF will include chain-of-custody attestation, SHA-256 checksums for every file, and a full chronological timeline of events.
+            </Text>
+          </View>
+
+          <View style={styles.summaryDivider} />
+
+          {/* Suspect info if present */}
+          {caseItem.suspect_info ? (
+            <View style={styles.suspectPreviewRow}>
+              <Ionicons name="person-circle-outline" size={14} color={Colors.secondaryText} />
+              <Text style={styles.suspectPreviewText} numberOfLines={1}>
+                Suspect: {caseItem.suspect_info}
               </Text>
             </View>
           ) : null}
 
-          {/* Attestation Box */}
-          <View style={styles.docAttestation}>
-            <Text style={styles.docAttestationTitle}>
-              CHAIN OF CUSTODY & INTEGRITY ATTESTATION:
+          {/* Description excerpt */}
+          {caseItem.description ? (
+            <Text style={styles.descPreview} numberOfLines={3}>
+              {caseItem.description}
             </Text>
-            <Text style={styles.docAttestationText}>
-              Generated offline on device. All digital evidence files recorded
-              herein possess verifiable SHA-256 cryptographic hashes calculated upon local storage.
-            </Text>
-          </View>
+          ) : null}
+        </Card>
 
-          {/* Section 1: Overview */}
-          <Text style={styles.docSectionTitle}>1. Incident Overview</Text>
-          <View style={styles.docTable}>
-            <View style={styles.docTableRow}>
-              <Text style={styles.docTableHead}>Title</Text>
-              <Text style={styles.docTableValBold}>{caseItem.title}</Text>
-            </View>
-            <View style={styles.docTableRow}>
-              <Text style={styles.docTableHead}>Case ID</Text>
-              <Text style={[styles.docTableVal, { fontFamily: 'monospace' }]}>
-                {caseItem.id}
-              </Text>
-            </View>
-            <View style={styles.docTableRow}>
-              <Text style={styles.docTableHead}>Category</Text>
-              <Text style={styles.docTableVal}>{caseItem.category}</Text>
-            </View>
-            <View style={styles.docTableRow}>
-              <Text style={styles.docTableHead}>Platform</Text>
-              <Text style={styles.docTableVal}>{caseItem.platform}</Text>
-            </View>
-            <View style={styles.docTableRow}>
-              <Text style={styles.docTableHead}>Date & Time</Text>
-              <Text style={styles.docTableVal}>
-                {caseItem.incident_date} {caseItem.incident_time || ''}
-              </Text>
-            </View>
-            <View style={styles.docTableRow}>
-              <Text style={styles.docTableHead}>Suspect Info</Text>
-              <Text style={styles.docTableVal}>
-                {caseItem.suspect_info || 'Not specified'}
-              </Text>
-            </View>
-          </View>
-
-          {/* Section 2: Narrative */}
-          <Text style={styles.docSectionTitle}>2. Incident Description</Text>
-          <View style={styles.docNarrativeBox}>
-            <Text style={styles.docNarrativeText}>
-              {caseItem.description || 'No detailed description provided.'}
-            </Text>
-          </View>
-
-          {/* Section 3: Evidence Index */}
-          <Text style={styles.docSectionTitle}>
-            3. Preserved Evidence Index ({evidenceList.length} Files)
-          </Text>
-          {evidenceList.map((ev, index) => (
-            <View key={ev.id} style={styles.docEvRow}>
-              <View style={styles.docEvHeader}>
-                <Text style={styles.docEvIndex}>#{index + 1}</Text>
-                <Text style={styles.docEvName}>{ev.original_filename}</Text>
-                <Text style={styles.docEvSize}>{formatBytes(ev.file_size)}</Text>
-              </View>
-              <Text style={styles.docEvHash} selectable>
-                SHA-256: {ev.sha256_hash}
-              </Text>
-            </View>
-          ))}
-
-          {/* Section 4: Verified Findings */}
-          <Text style={styles.docSectionTitle}>
-            4. Verified Findings ({verifiedFindings.length} Items)
-          </Text>
-          {verifiedFindings.map((f) => (
-            <View key={f.id} style={styles.docFindingRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.docFindingLabel}>{f.label}</Text>
-                <Text style={styles.docFindingVal}>{f.finding_value}</Text>
-                {f.user_notes ? (
-                  <Text style={styles.docFindingNotes}>Note: {f.user_notes}</Text>
-                ) : null}
-              </View>
-              <Badge label="VERIFIED" type="success" />
-            </View>
-          ))}
-
-          {includeUnverified && pendingFindings.length > 0 && (
+        {/* Action footer */}
+        <View style={styles.footerActions}>
+          {!lastGeneratedPdfUri && (
+            <Button
+              title="Generate PDF Report"
+              onPress={handleExportPdf}
+              loading={generatingPdf}
+              variant="primary"
+              icon="document-text-outline"
+              size="lg"
+              style={{ flex: 1 }}
+            />
+          )}
+          {lastGeneratedPdfUri && (
             <>
-              <Text style={[styles.docSectionTitle, { marginTop: 12 }]}>
-                Items Requiring Verification ({pendingFindings.length} Items)
-              </Text>
-              {pendingFindings.map((f) => (
-                <View key={f.id} style={styles.docFindingRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.docFindingLabel}>{f.label}</Text>
-                    <Text style={styles.docFindingVal}>{f.finding_value}</Text>
-                  </View>
-                  <Badge label="PENDING" type="warning" />
-                </View>
-              ))}
+              <Button
+                title="Share Report"
+                onPress={() => handleSharePdf()}
+                variant="primary"
+                icon="share-outline"
+                size="lg"
+                style={{ flex: 1, marginRight: Spacing.sm }}
+              />
+              <Button
+                title="Regenerate"
+                onPress={handleExportPdf}
+                variant="outline"
+                icon="refresh-outline"
+                size="lg"
+              />
             </>
           )}
-
-          {/* Section 5: Timeline */}
-          <Text style={styles.docSectionTitle}>
-            5. Chronological Incident Timeline ({events.length} Milestones)
-          </Text>
-          {events.map((evt) => (
-            <View key={evt.id} style={styles.docTimelineRow}>
-              <Text style={styles.docTimelineDate}>
-                {evt.event_date} {evt.event_time ? '• ' + evt.event_time : ''}
-              </Text>
-              <Text style={styles.docTimelineTitle}>{evt.title}</Text>
-              {evt.description ? (
-                <Text style={styles.docTimelineDesc}>{evt.description}</Text>
-              ) : null}
-            </View>
-          ))}
-
-          {/* Legal Disclaimer */}
-          <View style={styles.docDisclaimer}>
-            <Text style={styles.docDisclaimerText}>
-              DISCLAIMER: EvidenceVault is an offline evidence preservation tool.
-              Cryptographic SHA-256 hashes certify bit-level custody preservation on device.
-            </Text>
-          </View>
         </View>
       </ScrollView>
     </ScreenWrapper>
@@ -370,17 +366,24 @@ const styles = StyleSheet.create({
     borderColor: Colors.borderTeal,
     marginBottom: Spacing.md,
   },
+  configHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
   configTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
     color: Colors.white,
-    marginBottom: Spacing.sm,
+    marginLeft: 8,
   },
   switchRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 6,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
   },
   switchLabel: {
     fontSize: 13,
@@ -390,209 +393,137 @@ const styles = StyleSheet.create({
   switchSub: {
     fontSize: 11,
     color: Colors.secondaryText,
+    marginTop: 1,
   },
   exportActionRow: {
     flexDirection: 'row',
     marginTop: Spacing.sm,
   },
-  previewContainer: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
+  summaryCard: {
+    backgroundColor: Colors.card,
+    borderColor: Colors.borderTeal,
     marginBottom: Spacing.md,
   },
-  previewHeaderBar: {
+  summaryHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    borderBottomWidth: 2,
-    borderBottomColor: '#176B87',
-    paddingBottom: 8,
-    marginBottom: 10,
   },
-  docBrand: {
+  summaryBrandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  summaryBrand: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#101827',
-    letterSpacing: 0.5,
+    color: Colors.white,
+    letterSpacing: 1,
   },
-  docTagline: {
-    fontSize: 7.5,
-    fontWeight: '700',
-    color: '#45A3A0',
-    letterSpacing: 0.5,
-  },
-  demoWarningBanner: {
-    backgroundColor: '#FEF3C7',
-    padding: 6,
-    borderRadius: 4,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#F59E0B',
-  },
-  demoWarningText: {
-    color: '#92400E',
+  summaryTagline: {
     fontSize: 9,
     fontWeight: '700',
-    textAlign: 'center',
+    color: Colors.teal,
+    letterSpacing: 0.8,
+    marginTop: 1,
   },
-  docAttestation: {
-    backgroundColor: '#F8FAFC',
-    borderLeftWidth: 3,
-    borderLeftColor: '#45A3A0',
-    padding: 8,
-    borderRadius: 4,
-    marginBottom: 12,
+  summaryDivider: {
+    height: 1,
+    backgroundColor: Colors.border,
+    marginVertical: Spacing.md,
   },
-  docAttestationTitle: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#176B87',
+  summarySection: {
+    marginBottom: Spacing.sm,
   },
-  docAttestationText: {
-    fontSize: 8.5,
-    color: '#334155',
-    lineHeight: 12,
-    marginTop: 2,
-  },
-  docSectionTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#176B87',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    paddingBottom: 4,
-    marginTop: 10,
-    marginBottom: 6,
+  summaryLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: Colors.secondaryText,
     textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
   },
-  docTable: {
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 4,
-    marginBottom: 8,
-  },
-  docTableRow: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    padding: 6,
-  },
-  docTableHead: {
-    width: '30%',
-    fontSize: 9,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  docTableVal: {
-    width: '70%',
-    fontSize: 9,
-    color: '#0F172A',
-  },
-  docTableValBold: {
-    width: '70%',
-    fontSize: 9,
+  summaryValue: {
+    fontSize: 16,
     fontWeight: '700',
-    color: '#0F172A',
+    color: Colors.white,
   },
-  docNarrativeBox: {
-    backgroundColor: '#F8FAFC',
-    padding: 8,
-    borderRadius: 4,
-    marginBottom: 8,
-  },
-  docNarrativeText: {
-    fontSize: 9,
-    color: '#334155',
-    lineHeight: 13,
-  },
-  docEvRow: {
-    paddingVertical: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-  },
-  docEvHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  docEvIndex: {
-    fontSize: 8.5,
-    fontWeight: '700',
-    color: '#176B87',
-    marginRight: 4,
-  },
-  docEvName: {
-    fontSize: 9,
+  summaryValueSmall: {
+    fontSize: 13,
     fontWeight: '600',
-    color: '#0F172A',
+    color: Colors.white,
+  },
+  summaryTwoCol: {
+    flexDirection: 'row',
+    marginBottom: Spacing.sm,
+  },
+  summaryCol: {
     flex: 1,
   },
-  docEvSize: {
-    fontSize: 8,
-    color: '#64748B',
+  summarySectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.tealLight,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: Spacing.sm,
   },
-  docEvHash: {
-    fontSize: 7.5,
-    fontFamily: 'monospace',
-    color: '#0F172A',
-    marginTop: 2,
-  },
-  docFindingRow: {
+  statsGrid: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+  },
+  statBox: {
+    width: '50%',
+    paddingVertical: Spacing.sm,
+    paddingRight: Spacing.sm,
+  },
+  statValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: Colors.white,
+    marginTop: 4,
+  },
+  statLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.white,
+    marginTop: 1,
+  },
+  statSub: {
+    fontSize: 10,
+    color: Colors.secondaryText,
+    marginTop: 1,
+  },
+  integrityNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: Colors.secondaryBackground,
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+  },
+  integrityText: {
+    fontSize: 11,
+    color: Colors.secondaryText,
+    lineHeight: 16,
+    marginLeft: 8,
+    flex: 1,
+  },
+  suspectPreviewRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    marginBottom: Spacing.sm,
   },
-  docFindingLabel: {
-    fontSize: 8.5,
-    fontWeight: '600',
-    color: '#176B87',
+  suspectPreviewText: {
+    fontSize: 12,
+    color: Colors.secondaryText,
+    marginLeft: 6,
+    flex: 1,
   },
-  docFindingVal: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#0F172A',
-    fontFamily: 'monospace',
+  descPreview: {
+    fontSize: 12,
+    color: Colors.secondaryText,
+    lineHeight: 17,
   },
-  docFindingNotes: {
-    fontSize: 7.5,
-    color: '#64748B',
-    fontStyle: 'italic',
-  },
-  docTimelineRow: {
-    paddingVertical: 4,
-    borderLeftWidth: 2,
-    borderLeftColor: '#45A3A0',
-    paddingLeft: 6,
-    marginBottom: 4,
-  },
-  docTimelineDate: {
-    fontSize: 8,
-    fontWeight: '700',
-    color: '#176B87',
-  },
-  docTimelineTitle: {
-    fontSize: 8.5,
-    fontWeight: '600',
-    color: '#0F172A',
-  },
-  docTimelineDesc: {
-    fontSize: 8,
-    color: '#475569',
-  },
-  docDisclaimer: {
-    marginTop: 14,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
-  },
-  docDisclaimerText: {
-    fontSize: 7,
-    color: '#94A3B8',
-    textAlign: 'center',
-    lineHeight: 10,
+  footerActions: {
+    flexDirection: 'row',
   },
 });
-

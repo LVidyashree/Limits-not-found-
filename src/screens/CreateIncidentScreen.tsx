@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -6,10 +6,11 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList, Case, SeverityLevel } from '../types';
-import { Colors, Spacing, Typography, BorderRadius } from '../theme';
+import { Colors, Spacing, BorderRadius } from '../theme';
 import {
   ScreenWrapper,
   Header,
@@ -17,7 +18,11 @@ import {
   Button,
   Input,
 } from '../components';
-import { insertCase } from '../services/database';
+import { getCaseById } from '../services/database';
+import {
+  createCaseWithCloud,
+  updateCaseWithCloud,
+} from '../services/caseService';
 
 const CATEGORIES = [
   'Financial Fraud & UPI Scams',
@@ -52,7 +57,13 @@ const SEVERITIES: { level: SeverityLevel; label: string; color: string }[] = [
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CreateIncident'>;
 
-export const CreateIncidentScreen: React.FC<Props> = ({ navigation }) => {
+export const CreateIncidentScreen: React.FC<Props> = ({
+  navigation,
+  route,
+}) => {
+  const editingCaseId = route.params?.caseId;
+  const isEditing = Boolean(editingCaseId);
+
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState(CATEGORIES[0]);
   const [description, setDescription] = useState('');
@@ -66,7 +77,89 @@ export const CreateIncidentScreen: React.FC<Props> = ({ navigation }) => {
   const [suspectInfo, setSuspectInfo] = useState('');
   const [severity, setSeverity] = useState<SeverityLevel>('medium');
   const [loading, setLoading] = useState(false);
+  const [loadingCase, setLoadingCase] = useState(isEditing);
+  const [existingCase, setExistingCase] = useState<Case | null>(null);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!editingCaseId) return undefined;
+
+    let active = true;
+
+    const loadCase = async () => {
+      setLoadingCase(true);
+      setError('');
+      try {
+        const found = await getCaseById(editingCaseId);
+        if (!active) return;
+
+        if (!found) {
+          setError('That case could not be found on this device.');
+          return;
+        }
+
+        setExistingCase(found);
+        setTitle(found.title);
+        setCategory(found.category);
+        setDescription(found.description);
+        setIncidentDate(found.incident_date);
+        setIncidentTime(found.incident_time);
+        setPlatform(found.platform);
+        setSuspectInfo(found.suspect_info);
+        setSeverity(found.severity);
+      } catch (err) {
+        if (!active) return;
+        setError(
+          err instanceof Error ? err.message : 'Could not load this case.'
+        );
+      } finally {
+        if (active) setLoadingCase(false);
+      }
+    };
+
+    loadCase();
+
+    return () => {
+      active = false;
+    };
+  }, [editingCaseId]);
+
+  const categoryOptions = CATEGORIES.includes(category)
+    ? CATEGORIES
+    : [category, ...CATEGORIES];
+  const platformOptions = PLATFORMS.includes(platform)
+    ? PLATFORMS
+    : [platform, ...PLATFORMS];
+
+  const showSavedAlert = (
+    localCaseId: string,
+    cloudSynced: boolean,
+    cloudError: string | null,
+    closeEditor: boolean
+  ) => {
+    const detail = cloudSynced
+      ? 'Saved to this device and synced to your account.'
+      : cloudError
+        ? `Saved on this device, but the account sync failed: ${cloudError}`
+        : 'Saved to this device. Sign in to mirror cases to your account.';
+
+    Alert.alert(
+      cloudSynced ? 'Case Saved' : 'Saved Locally',
+      detail,
+      [
+        {
+          text: 'View Case',
+          onPress: () => {
+            if (closeEditor) {
+              navigation.goBack();
+            } else {
+              navigation.replace('CaseDetail', { caseId: localCaseId });
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const handleSave = async () => {
     setError('');
@@ -81,56 +174,84 @@ export const CreateIncidentScreen: React.FC<Props> = ({ navigation }) => {
 
     setLoading(true);
     try {
-      const caseId = 'case_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
-      const now = new Date().toISOString();
+      if (isEditing) {
+        if (!existingCase || !editingCaseId) {
+          throw new Error('The original case could not be loaded.');
+        }
 
-      const newCase: Case = {
-        id: caseId,
-        title: title.trim(),
-        category,
-        description: description.trim(),
-        incident_date: incidentDate.trim(),
-        incident_time: incidentTime.trim(),
-        platform,
-        suspect_info: suspectInfo.trim(),
-        severity,
-        status: 'active',
-        is_demo: 0,
-        created_at: now,
-        updated_at: now,
-      };
+        const result = await updateCaseWithCloud({
+          ...existingCase,
+          title,
+          category,
+          description,
+          incident_date: incidentDate,
+          incident_time: incidentTime,
+          platform,
+          suspect_info: suspectInfo,
+          severity,
+        });
 
-      await insertCase(newCase);
+        setExistingCase(result.localCase);
+        showSavedAlert(
+          result.localCase.id,
+          result.cloudSynced,
+          result.cloudError,
+          true
+        );
+      } else {
+        const result = await createCaseWithCloud({
+          title,
+          category,
+          description,
+          incident_date: incidentDate,
+          incident_time: incidentTime,
+          platform,
+          suspect_info: suspectInfo,
+          severity,
+        });
 
-      Alert.alert(
-        'Incident Created',
-        'Your case has been logged securely into the local SQLite database. Would you like to upload evidence files now?',
-        [
-          {
-            text: 'View Case',
-            onPress: () => navigation.replace('CaseDetail', { caseId }),
-          },
-          {
-            text: 'Upload Evidence Now',
-            onPress: () => {
-              navigation.replace('CaseDetail', { caseId });
-              navigation.navigate('UploadEvidence', { caseId });
-            },
-          },
-        ]
-      );
+        showSavedAlert(
+          result.localCase.id,
+          result.cloudSynced,
+          result.cloudError,
+          false
+        );
+      }
     } catch (err) {
-      Alert.alert('Error', 'Failed to save incident: ' + String(err));
+      const message =
+        err instanceof Error ? err.message : 'Failed to save incident.';
+      setError(message);
+      Alert.alert('Error', message);
     } finally {
       setLoading(false);
     }
   };
 
+  if (loadingCase) {
+    return (
+      <ScreenWrapper>
+        <Header
+          title="Edit Incident"
+          subtitle="Loading case details"
+          onBack={() => navigation.goBack()}
+        />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator color={Colors.teal} />
+          <Text style={styles.loadingText}>Loading case details...</Text>
+        </View>
+      </ScreenWrapper>
+    );
+  }
+
   return (
     <ScreenWrapper>
       <Header
-        title="Report an Incident"
-        subtitle="Step 1 of Evidence Preservation"
+        title={isEditing ? 'Edit Incident' : 'Report an Incident'}
+        subtitle={
+          isEditing
+            ? 'Update case details'
+            : 'Step 1 of Evidence Preservation'
+        }
         onBack={() => navigation.goBack()}
       />
 
@@ -142,7 +263,8 @@ export const CreateIncidentScreen: React.FC<Props> = ({ navigation }) => {
           <Text style={styles.introTitle}>Preserve Digital Evidence Early</Text>
           <Text style={styles.introText}>
             Document the key context before uploading screenshots or message logs.
-            All details stay 100% offline in your encrypted vault.
+            Details are saved to your local vault first, then synced to your
+            signed-in account when a connection is available.
           </Text>
         </Card>
 
@@ -159,6 +281,7 @@ export const CreateIncidentScreen: React.FC<Props> = ({ navigation }) => {
           value={title}
           onChangeText={setTitle}
           icon="text-outline"
+          maxLength={200}
         />
 
         {/* Incident Category Selection */}
@@ -168,7 +291,7 @@ export const CreateIncidentScreen: React.FC<Props> = ({ navigation }) => {
           showsHorizontalScrollIndicator={false}
           style={styles.chipRow}
         >
-          {CATEGORIES.map((cat) => {
+          {categoryOptions.map((cat) => {
             const isSelected = category === cat;
             return (
               <TouchableOpacity
@@ -199,7 +322,7 @@ export const CreateIncidentScreen: React.FC<Props> = ({ navigation }) => {
           showsHorizontalScrollIndicator={false}
           style={styles.chipRow}
         >
-          {PLATFORMS.map((plat) => {
+          {platformOptions.map((plat) => {
             const isSelected = platform === plat;
             return (
               <TouchableOpacity
@@ -293,12 +416,13 @@ export const CreateIncidentScreen: React.FC<Props> = ({ navigation }) => {
           onChangeText={setDescription}
           multiline
           numberOfLines={4}
+          maxLength={20000}
           style={{ height: 100, textAlignVertical: 'top' }}
         />
 
         {/* Save Button */}
         <Button
-          title="Save Incident & Proceed"
+          title={isEditing ? 'Save Case Changes' : 'Save Incident & Proceed'}
           onPress={handleSave}
           loading={loading}
           variant="primary"
@@ -315,6 +439,16 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: Spacing.md,
     paddingBottom: Spacing.xxl,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: Colors.secondaryText,
+    fontSize: 14,
+    marginTop: Spacing.sm,
   },
   introCard: {
     backgroundColor: Colors.secondaryBackground,
