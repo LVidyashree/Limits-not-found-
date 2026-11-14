@@ -1,0 +1,5 @@
+# Place your GGUF model file here:
+# Qwen2.5-3B-Instruct.Q4_K_M.gguf
+#
+# Configure QWEN_MODEL_PATH in backend/.env to point to this file.
+# Default: ./models/Qwen2.5-3B-Instruct.Q4_K_M.gguf
