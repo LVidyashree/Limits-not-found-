@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     
     # OCR and AI configuration
     TESSERACT_CMD: str | None = None
+    WHISPER_MODEL: str = "base" # "tiny", "base", "small", "medium"
+    WHISPER_DEVICE: str = "cpu" # "cpu" or "cuda"
     GEMINI_API_KEY: str | None = None
     
     # Legal Certificate defaults

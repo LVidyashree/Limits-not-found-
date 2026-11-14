@@ -116,6 +116,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 | `GET` | `/api/v1/cases/{case_id}/evidence/{evidence_id}` | Inspect single evidence item with extracted text & findings |
 | `GET` | `/api/v1/cases/{case_id}/evidence/{evidence_id}/download` | Download raw evidence file securely |
 | `POST` | `/api/v1/cases/{case_id}/evidence/{evidence_id}/verify-hash` | Verify on-disk file against initial SHA-256 hash (tamper check) |
+| `POST` | `/api/v1/cases/{case_id}/evidence/{evidence_id}/ocr` | Trigger or re-run Tesseract OCR on image evidence |
+| `POST` | `/api/v1/cases/{case_id}/evidence/{evidence_id}/transcribe` | Trigger or re-run Whisper Speech-to-Text on audio evidence |
 
 ### 3. "Putting It All Together" - Intelligence & Synthesis (`/api/v1/cases/{case_id}/analysis`)
 | Method | Endpoint | Description |
