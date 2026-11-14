@@ -545,6 +545,23 @@ function checkOwnershipWrites() {
     `update public.evidence set original_filename = 'renamed.pdf' where id = '${EV_A2}'`,
     { role: 'authenticated', sub: A }
   );
+  // Cross-user evidence modification must be a no-op under RLS: the UPDATE
+  // matches zero rows owned by B, and the DELETE removes nothing.
+  expectValue(
+    'A cannot modify user B evidence metadata',
+    freshDb,
+    `update public.evidence set original_filename = 'hijacked.pdf'
+     where id = '${EV_B}' returning id`,
+    '',
+    { role: 'authenticated', sub: A }
+  );
+  expectValue(
+    'A cannot delete user B evidence',
+    freshDb,
+    `delete from public.evidence where id = '${EV_B}' returning id`,
+    '',
+    { role: 'authenticated', sub: A }
+  );
 
   // Reports.
   expectOk(
@@ -577,6 +594,23 @@ function checkOwnershipWrites() {
     `insert into public.incident_reports (case_id, report_content, report_version)
      values ('${CASE_A2}', 'duplicate', 1)`,
     'duplicate key|unique',
+    { role: 'authenticated', sub: A }
+  );
+  // Cross-user report tampering must be a no-op under RLS: the UPDATE
+  // matches zero rows owned by B, and the DELETE removes nothing.
+  expectValue(
+    'A cannot modify user B report content',
+    freshDb,
+    `update public.incident_reports set report_content = 'hijacked'
+     where id = '${REP_B}' returning id`,
+    '',
+    { role: 'authenticated', sub: A }
+  );
+  expectValue(
+    'A cannot delete user B report',
+    freshDb,
+    `delete from public.incident_reports where id = '${REP_B}' returning id`,
+    '',
     { role: 'authenticated', sub: A }
   );
 

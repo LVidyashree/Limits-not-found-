@@ -131,6 +131,17 @@ authenticated mirror. No mock/demo rows are created by the normal workflow.
 - **RLS.** Every query runs as the signed-in user; `user_id` is never sent by the app and
   defaults to `auth.uid()` server-side. No `service_role` key is used.
 
+## Incident reports
+
+`public.incident_reports` stores the user-editable AI-assisted report content for a case,
+versioned per case (`case_id, report_version` is unique).
+
+- Reports are generated as drafts from the local case + evidence + findings + timeline data.
+- Auto-extracted findings are labelled as pending user verification; they are never asserted as
+  verified facts.
+- Every finding keeps its source evidence reference (filename + SHA-256) inside the report.
+- Users can reopen any saved version, edit it, and save it (in place or as a new version).
+
 ## Encrypted cloud backup (optional)
 
 Cloud backup is opt-in. Evidence files are still stored locally by default.
